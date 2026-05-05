@@ -1,9 +1,11 @@
 # Dependencies
 node_modules/
+client/node_modules/
 functions/node_modules/
 
 # Build outputs
 dist/
+client/dist/
 functions/lib/
 coverage/
 

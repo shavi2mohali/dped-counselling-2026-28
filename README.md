@@ -1,6 +1,61 @@
 # DPEd 2026-28 Counseling System
 
-Firebase + React + TypeScript project skeleton for the Punjab D.P.Ed 2026-28 counseling system.
+Firebase + Vite React + TypeScript project for the Punjab D.P.Ed 2026-28 counseling system.
+
+## Clean Project Structure
+
+```text
+dped-counselling-2026-28/
+├── client/
+│   ├── src/
+│   │   ├── pages/
+│   │   ├── components/
+│   │   ├── services/
+│   │   ├── hooks/
+│   │   ├── lib/
+│   │   └── main.tsx
+│   ├── public/
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── tailwind.config.js
+│   └── index.html
+├── functions/
+│   ├── src/
+│   └── package.json
+├── firebase.json
+├── firestore.rules
+├── firestore.indexes.json
+├── .firebaserc
+├── .gitignore
+└── README.md
+```
+
+## Root Commands
+
+```bash
+npm run dev
+npm run build
+npm run deploy
+npm run functions:build
+npm run functions:deploy
+```
+
+## Cleanup Notes
+
+The repository is intentionally organized with React code only inside `client/` and Cloud Functions only inside `functions/`.
+
+Removed from the root during cleanup:
+
+- Duplicate Vite React files: `src/`, `index.html`, `vite.config.*`, `tailwind.config.js`, `postcss.config.js`, `tsconfig*.json`
+- Root frontend build/dependency outputs: `dist/`, `node_modules/`, root `package-lock.json`
+- Unused default Vite client assets: `client/src/App.css`, `client/src/assets/`
+
+Kept at the root:
+
+- Firebase config: `firebase.json`, `.firebaserc`, `firestore.rules`, `firestore.indexes.json`
+- Cloud Functions: `functions/`
+- Client app: `client/`
+- Project metadata: `package.json`, `.gitignore`, `README.md`
 
 ## Firestore Collections
 
