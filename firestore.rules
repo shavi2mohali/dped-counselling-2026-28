@@ -1,0 +1,45 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    function isLiveDisplay() {
+      return signedIn() && request.auth.token.liveDisplay == true;
+    }
+
+    function canReadOperationalData() {
+      return isAdmin() || isLiveDisplay();
+    }
+
+    match /candidates/{registrationId} {
+      allow read: if canReadOperationalData();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /seatMatrix/{collegeName} {
+      allow read: if canReadOperationalData();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /allotments/{allotmentId} {
+      allow read: if canReadOperationalData();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read: if canReadOperationalData();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
