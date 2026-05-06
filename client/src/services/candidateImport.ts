@@ -1,4 +1,4 @@
-import { ref, uploadBytesResumable } from "firebase/storage";
+import { getDownloadURL, ref, uploadBytesResumable } from "firebase/storage";
 import { getFirebaseAuth, getFirebaseStorage } from "../lib/firebase";
 
 export interface ImportCandidatesSummary {
@@ -41,7 +41,7 @@ const buildStoragePath = (file: File) => {
 };
 
 const importCandidatesUrl =
-  "https://asia-southeast2-dped-counselling-2026-28.cloudfunctions.net/importCandidates";
+  "https://asia-south2-dped-counselling-2026-28.cloudfunctions.net/importCandidates";
 
 export async function uploadCandidateExcelAndImport({
   file,
@@ -69,6 +69,8 @@ export async function uploadCandidateExcelAndImport({
     );
   });
 
+  const fileUrl = await getDownloadURL(uploadTask.snapshot.ref);
+
   const currentUser = getFirebaseAuth().currentUser;
 
   if (!currentUser) {
@@ -82,7 +84,7 @@ export async function uploadCandidateExcelAndImport({
       Authorization: `Bearer ${idToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ storagePath, dryRun }),
+    body: JSON.stringify({ fileUrl, storagePath, dryRun }),
   });
 
   const responseBody = (await response.json().catch(() => ({}))) as {

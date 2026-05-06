@@ -1,5 +1,6 @@
-import * as admin from "firebase-admin";
-import { getFirestore } from "firebase-admin/firestore";
+import { getAuth } from "firebase-admin/auth";
+import { initializeApp } from "firebase-admin/app";
+import { getFirestore, Timestamp, type WriteBatch } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { onRequest } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
@@ -7,7 +8,7 @@ import * as XLSX from "xlsx";
 import { emptySeatCounts, SEAT_MATRIX, TOTAL_SEATS } from "./seatMatrix.js";
 import type { Candidate, CategoryColumn } from "./models.js";
 
-admin.initializeApp();
+initializeApp();
 
 const db = getFirestore();
 
@@ -35,7 +36,8 @@ type CandidateColumnKey =
 type ColumnMap = Partial<Record<CandidateColumnKey, string | string[]>>;
 
 interface ImportCandidatesRequest {
-  storagePath: string;
+  fileUrl?: string;
+  storagePath?: string;
   bucketName?: string;
   sheetName?: string;
   dryRun?: boolean;
@@ -133,6 +135,13 @@ const RESERVED_CATEGORY_TOKENS = [
   "phy",
 ];
 
+const robustCorsOptions = {
+  origin: true,
+  methods: ["POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  maxAgeSeconds: 3600,
+};
+
 const requireAdmin = async (req: { headers: { authorization?: string } }) => {
   const authHeader = req.headers.authorization ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : "";
@@ -142,7 +151,7 @@ const requireAdmin = async (req: { headers: { authorization?: string } }) => {
   }
 
   try {
-    return await admin.auth().verifyIdToken(token);
+    return await getAuth().verifyIdToken(token);
   } catch {
     throw new ImportError(401, "Invalid or expired Firebase Auth token.");
   }
@@ -286,7 +295,7 @@ const mapEffectiveCategory = (category: string, punjabDomicile: boolean): Catego
   return "General";
 };
 
-const commitInChunks = async (writes: Array<(batch: admin.firestore.WriteBatch) => void>) => {
+const commitInChunks = async (writes: Array<(batch: WriteBatch) => void>) => {
   const chunkSize = 450;
 
   for (let index = 0; index < writes.length; index += chunkSize) {
@@ -298,10 +307,91 @@ const commitInChunks = async (writes: Array<(batch: admin.firestore.WriteBatch) 
   }
 };
 
+const setCorsHeaders = (res: {
+  set: (name: string, value: string) => void;
+}) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.set("Access-Control-Max-Age", "3600");
+};
+
+const downloadExcelFile = async ({
+  bucketName,
+  fileUrl,
+  storagePath,
+}: Pick<ImportCandidatesRequest, "bucketName" | "fileUrl" | "storagePath">): Promise<{
+  buffer: Buffer;
+  source: string;
+}> => {
+  if (fileUrl) {
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(fileUrl);
+    } catch {
+      throw new ImportError(400, "fileUrl must be a valid URL.");
+    }
+
+    logger.info("Downloading Excel file from fileUrl", {
+      host: parsedUrl.host,
+      pathname: parsedUrl.pathname,
+    });
+
+    const response = await fetch(fileUrl, {
+      method: "GET",
+      headers: {
+        Accept:
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel, application/octet-stream",
+      },
+    });
+
+    if (!response.ok) {
+      throw new ImportError(response.status, `Failed to download Excel file from fileUrl. HTTP ${response.status}.`);
+    }
+
+    const contentLength = response.headers.get("content-length");
+    const arrayBuffer = await response.arrayBuffer();
+    logger.info("Downloaded fileUrl response", {
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      contentLength,
+      bytes: arrayBuffer.byteLength,
+    });
+
+    if (arrayBuffer.byteLength === 0) {
+      throw new ImportError(400, "Downloaded Excel file is empty.");
+    }
+
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      source: fileUrl,
+    };
+  }
+
+  if (!storagePath) {
+    throw new ImportError(400, "fileUrl or storagePath is required.");
+  }
+
+  logger.info("Downloading Excel file from Firebase Storage", { bucketName, storagePath });
+
+  const file = bucketName ? getStorage().bucket(bucketName).file(storagePath) : getStorage().bucket().file(storagePath);
+  const [exists] = await file.exists();
+
+  if (!exists) {
+    throw new ImportError(404, `Excel file not found in Firebase Storage: ${storagePath}`);
+  }
+
+  const [buffer] = await file.download();
+  return {
+    buffer,
+    source: storagePath,
+  };
+};
+
 const mapCandidateRow = (
   row: CandidateImportRow,
   rowNumber: number,
-  now: admin.firestore.Timestamp,
+  now: Timestamp,
   columnMap?: ColumnMap,
 ): { candidate?: Candidate; error?: ParsingError } => {
   const lookup = buildColumnLookup(row);
@@ -381,7 +471,7 @@ const mapCandidateRow = (
       fatherName: normalizeString(getCell(row, lookup, "Father_Name", columnMap)) || undefined,
       motherName: normalizeString(getCell(row, lookup, "Mother_Name", columnMap)) || undefined,
       dateOfBirth: dob.display,
-      dobTimestamp: admin.firestore.Timestamp.fromDate(dob.date),
+      dobTimestamp: Timestamp.fromDate(dob.date),
       gender: normalizeString(getCell(row, lookup, "Gender", columnMap)) || undefined,
       pinCode: normalizeString(getCell(row, lookup, "PinCode", columnMap)) || undefined,
       result: normalizeString(getCell(row, lookup, "Result", columnMap)) || undefined,
@@ -429,13 +519,23 @@ const assignMeritRanks = (candidates: Candidate[]): Candidate[] =>
 
 export const importCandidates = onRequest(
   {
-    cors: true,
-    region: "asia-southeast2",
+    cors: robustCorsOptions as unknown as true,
+    region: "asia-south2",
+    timeoutSeconds: 300,
+    memory: "1GiB",
   },
   async (req, res) => {
-    logger.info("Import request received", { body: req.body });
+    setCorsHeaders(res);
+
+    logger.info("Import request received", {
+      method: req.method,
+      origin: req.headers.origin,
+      hasAuthorizationHeader: Boolean(req.headers.authorization),
+      bodyKeys: req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
+    });
 
     if (req.method === "OPTIONS") {
+      logger.info("CORS preflight handled for importCandidates");
       res.status(204).send("");
       return;
     }
@@ -449,26 +549,32 @@ export const importCandidates = onRequest(
       const decodedToken = await requireAdmin(req);
       const requestBody = (req.body?.data ?? req.body ?? {}) as ImportCandidatesRequest;
 
-      const { storagePath, bucketName, sheetName, dryRun = false, columnMap } = requestBody;
+      const { fileUrl, storagePath, bucketName, sheetName, dryRun = false, columnMap } = requestBody;
 
-      if (!storagePath) {
-        throw new ImportError(400, "storagePath is required.");
-      }
-
-      const file = bucketName
-        ? getStorage().bucket(bucketName).file(storagePath)
-        : getStorage().bucket().file(storagePath);
-      const [exists] = await file.exists();
-
-      if (!exists) {
-        throw new ImportError(404, `Excel file not found in Firebase Storage: ${storagePath}`);
-      }
+      logger.info("Import request authorized", {
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+        hasFileUrl: Boolean(fileUrl),
+        storagePath,
+        bucketName,
+        sheetName,
+        dryRun,
+      });
 
       let fileBuffer: Buffer;
       try {
-        [fileBuffer] = await file.download();
+        const downloaded = await downloadExcelFile({ bucketName, fileUrl, storagePath });
+        fileBuffer = downloaded.buffer;
+        logger.info("Excel file downloaded", {
+          source: downloaded.source,
+          bytes: fileBuffer.length,
+        });
       } catch (error) {
-        throw new ImportError(500, "Failed to download Excel file from Firebase Storage.", {
+        if (error instanceof ImportError) {
+          throw error;
+        }
+
+        throw new ImportError(500, "Failed to download Excel file.", {
           message: error instanceof Error ? error.message : String(error),
         });
       }
@@ -490,12 +596,17 @@ export const importCandidates = onRequest(
       }
 
       const rows = XLSX.utils.sheet_to_json<CandidateImportRow>(worksheet, { defval: "", raw: true });
+      logger.info("Excel sheet parsed", {
+        sheetName: selectedSheetName,
+        rows: rows.length,
+        workbookSheets: workbook.SheetNames,
+      });
 
       if (rows.length === 0) {
         throw new ImportError(400, `Sheet has no candidate rows: ${selectedSheetName}`);
       }
 
-      const now = admin.firestore.Timestamp.now();
+      const now = Timestamp.now();
       const parsingErrors: ParsingError[] = [];
       const parsedCandidates: Candidate[] = [];
       const seenRegistrationIds = new Set<string>();
@@ -523,6 +634,10 @@ export const importCandidates = onRequest(
       });
 
       const candidates = assignMeritRanks(parsedCandidates);
+      logger.info("Candidate rows mapped", {
+        validCandidates: candidates.length,
+        parsingErrors: parsingErrors.length,
+      });
       const punjabDomicileCount = candidates.filter((candidate) => candidate.isPunjabDomicile).length;
       const nonPunjabDomicileCount = candidates.length - punjabDomicileCount;
       const categoryChangedToGeneralDueToNonDomicile = candidates.filter(
@@ -541,6 +656,7 @@ export const importCandidates = onRequest(
 
       const summary = {
         dryRun,
+        fileUrl,
         storagePath,
         sheetName: selectedSheetName,
         totalRowsRead: rows.length,
@@ -555,11 +671,12 @@ export const importCandidates = onRequest(
       };
 
       if (dryRun) {
+        logger.info("Dry run completed", summary);
         res.status(200).json({ data: summary });
         return;
       }
 
-      const writes: Array<(batch: admin.firestore.WriteBatch) => void> = [];
+      const writes: Array<(batch: WriteBatch) => void> = [];
 
       for (const candidate of candidates) {
         writes.push((batch) => {
@@ -610,6 +727,11 @@ export const importCandidates = onRequest(
       });
 
       await commitInChunks(writes);
+      logger.info("Import committed to Firestore", {
+        importedCandidates: candidates.length,
+        seatMatrixColleges: SEAT_MATRIX.length,
+        parsingErrors: parsingErrors.length,
+      });
 
       res.status(200).json({ data: summary });
     } catch (error) {

@@ -6,36 +6,22 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isAdmin() {
-      return signedIn() && request.auth.token.admin == true;
-    }
-
-    function isLiveDisplay() {
-      return signedIn() && request.auth.token.liveDisplay == true;
-    }
-
-    function canReadOperationalData() {
-      return isAdmin() || isLiveDisplay();
-    }
-
+    // Development rule: any signed-in Firebase Auth user can read/write app data.
+    // Replace with custom admin claims before production launch.
     match /candidates/{registrationId} {
-      allow read: if canReadOperationalData();
-      allow create, update, delete: if isAdmin();
+      allow read, write: if signedIn();
     }
 
     match /seatMatrix/{collegeName} {
-      allow read: if canReadOperationalData();
-      allow create, update, delete: if isAdmin();
+      allow read, write: if signedIn();
     }
 
     match /allotments/{allotmentId} {
-      allow read: if canReadOperationalData();
-      allow create, update, delete: if isAdmin();
+      allow read, write: if signedIn();
     }
 
     match /settings/{settingId} {
-      allow read: if canReadOperationalData();
-      allow create, update, delete: if isAdmin();
+      allow read, write: if signedIn();
     }
 
     match /{document=**} {
