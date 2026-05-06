@@ -15,6 +15,7 @@ import {
   getCandidateId,
   getCandidateName,
   getCandidateRank,
+  getCandidateDistrict,
   getEffectiveCategory,
   getEligibleCategories,
   getOriginalCategory,
@@ -24,6 +25,7 @@ import {
   isPendingForCall,
   type Candidate,
   type CategoryColumn,
+  type SeatMatrixEntry,
 } from "../lib/counseling";
 import { getFirebaseFirestore } from "../lib/firebase";
 
@@ -47,6 +49,22 @@ function StatusMessage({ message, tone }: { message: string; tone: "success" | "
         : "border-blue-200 bg-blue-50 text-blue-800";
 
   return <div className={`rounded-lg border px-4 py-3 text-base font-bold ${toneClass}`}>{message}</div>;
+}
+
+function hasAnyRemainingSeat(college: SeatMatrixEntry) {
+  return categoryColumns.some((category) => getSeatRemaining(college, category) > 0);
+}
+
+function getSeatTone(remaining: number) {
+  if (remaining <= 0) {
+    return "border-red-300 bg-red-50 text-red-800";
+  }
+
+  if (remaining <= 2) {
+    return "border-amber-300 bg-amber-50 text-amber-800";
+  }
+
+  return "border-emerald-300 bg-emerald-50 text-emerald-800";
 }
 
 export function LiveCounselingPanel() {
@@ -79,6 +97,8 @@ export function LiveCounselingPanel() {
     () => getEligibleCategories(currentCandidate, selectedCollege),
     [currentCandidate, selectedCollege],
   );
+
+  const collegesWithAvailableSeats = useMemo(() => seatMatrix.filter(hasAnyRemainingSeat), [seatMatrix]);
 
   const nextCandidates = useMemo(
     () => candidates.filter(isPendingForCall).slice(0, 6),
@@ -289,7 +309,9 @@ export function LiveCounselingPanel() {
         <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <p className="text-base font-black uppercase tracking-wide text-govt-700">Live Counseling Control</p>
-            <h1 className="mt-1 text-4xl font-black text-slate-950">Physical Hall Operations Panel</h1>
+            <h1 className="mt-1 text-4xl font-black text-slate-950 md:text-5xl">
+              DPEd 2026-28 Counseling - Live Session
+            </h1>
             <p className="mt-2 text-lg font-semibold text-slate-600">
               Call candidates by merit rank, allot seats, and update the public workflow in real time.
             </p>
@@ -332,9 +354,10 @@ export function LiveCounselingPanel() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <CandidateDetail label="Original Category" value={getOriginalCategory(currentCandidate)} />
+                <CandidateDetail label="Category" value={getOriginalCategory(currentCandidate)} />
                 <CandidateDetail label="Effective Category" value={getEffectiveCategory(currentCandidate)} />
                 <CandidateDetail label="Percentage12" value={formatPercent(getPercentage12(currentCandidate))} />
+                <CandidateDetail label="District" value={getCandidateDistrict(currentCandidate) || "-"} />
                 <CandidateDetail
                   label="Domicile"
                   value={currentCandidate.isPunjabDomicile === false ? "Non-Punjab" : "Punjab"}
@@ -369,7 +392,7 @@ export function LiveCounselingPanel() {
                 className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg font-bold text-slate-950 outline-none focus:border-govt-700 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
               >
                 <option value="">Choose college</option>
-                {seatMatrix.map((college) => (
+                {collegesWithAvailableSeats.map((college) => (
                   <option key={college.id} value={college.id}>
                     {college.collegeName}
                   </option>
@@ -441,7 +464,9 @@ export function LiveCounselingPanel() {
         <div className="mb-4 flex flex-col gap-2 xl:flex-row xl:items-end xl:justify-between">
           <div>
             <h2 className="text-2xl font-black text-slate-950">Real-Time Seat Availability</h2>
-            <p className="text-base font-semibold text-slate-600">Green means seats available. Red means full.</p>
+            <p className="text-base font-semibold text-slate-600">
+              Green = available, Yellow = low seats, Red = full.
+            </p>
           </div>
           <div className="text-base font-black text-slate-700">Colleges: {seatMatrix.length}</div>
         </div>
@@ -469,16 +494,12 @@ export function LiveCounselingPanel() {
                   {categoryColumns.map((category) => {
                     const remaining = getSeatRemaining(college, category);
                     const filled = getSeatFilled(college, category);
-                    const available = remaining > 0;
-
                     return (
                       <td key={category} className="px-3 py-4 text-center">
                         <div
                           className={[
                             "mx-auto min-w-20 rounded-lg border px-3 py-2",
-                            available
-                              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                              : "border-red-200 bg-red-50 text-red-800",
+                            getSeatTone(remaining),
                           ].join(" ")}
                         >
                           <p className="text-2xl font-black">{remaining}</p>

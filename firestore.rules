@@ -9,11 +9,13 @@ service cloud.firestore {
     // Development rule: any signed-in Firebase Auth user can read/write app data.
     // Replace with custom admin claims before production launch.
     match /candidates/{registrationId} {
-      allow read, write: if signedIn();
+      allow read: if true;
+      allow write: if signedIn();
     }
 
     match /seatMatrix/{collegeName} {
-      allow read, write: if signedIn();
+      allow read: if true;
+      allow write: if signedIn();
     }
 
     match /allotments/{allotmentId} {
@@ -21,7 +23,8 @@ service cloud.firestore {
     }
 
     match /settings/{settingId} {
-      allow read, write: if signedIn();
+      allow read: if true;
+      allow write: if signedIn();
     }
 
     match /{document=**} {

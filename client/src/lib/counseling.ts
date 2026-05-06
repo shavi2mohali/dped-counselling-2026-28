@@ -37,10 +37,14 @@ export interface Candidate {
   name?: string;
   originalCategoryName?: string;
   Category_Name?: string;
+  categoryName?: string;
   category?: string;
   effectiveCategoryName?: string;
+  effectiveCategory?: string;
   percentage12?: number;
   Percentage12?: number;
+  district?: string;
+  District?: string;
   isPunjabDomicile?: boolean;
   eligibleForReservation?: boolean;
   meritRank?: number;
@@ -79,15 +83,19 @@ export function getCandidateRank(candidate: Candidate) {
 }
 
 export function getOriginalCategory(candidate: Candidate) {
-  return candidate.originalCategoryName ?? candidate.Category_Name ?? candidate.category ?? "General";
+  return candidate.originalCategoryName ?? candidate.Category_Name ?? candidate.categoryName ?? candidate.category ?? "General";
 }
 
 export function getEffectiveCategory(candidate: Candidate) {
-  return candidate.effectiveCategoryName ?? candidate.category ?? "General";
+  return candidate.effectiveCategoryName ?? candidate.effectiveCategory ?? candidate.category ?? "General";
 }
 
 export function getPercentage12(candidate: Candidate) {
   return candidate.percentage12 ?? candidate.Percentage12;
+}
+
+export function getCandidateDistrict(candidate: Candidate) {
+  return candidate.district ?? candidate.District ?? "";
 }
 
 export function isPendingForCall(candidate: Candidate) {

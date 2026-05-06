@@ -24,7 +24,7 @@ export function useLiveCounselingData() {
       const firestore = getFirebaseFirestore();
 
       unsubscribeCandidates = onSnapshot(
-        query(collection(firestore, "candidates"), orderBy("meritRank", "asc")),
+        query(collection(firestore, "candidates"), orderBy("rank", "asc")),
         (snapshot) => {
           setCandidates(snapshot.docs.map((candidateDoc) => candidateDoc.data() as Candidate));
           setLoading(false);
