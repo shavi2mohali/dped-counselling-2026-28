@@ -1,7 +1,8 @@
 import * as admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onRequest } from "firebase-functions/v2/https";
+import * as logger from "firebase-functions/logger";
 import * as XLSX from "xlsx";
 import { emptySeatCounts, SEAT_MATRIX, TOTAL_SEATS } from "./seatMatrix.js";
 import type { Candidate, CategoryColumn } from "./models.js";
@@ -19,6 +20,9 @@ type CandidateColumnKey =
   | "Father_Name"
   | "Mother_Name"
   | "Category_Name"
+  | "Gender"
+  | "PinCode"
+  | "Result"
   | "MarksObtained10"
   | "TotalMarks10"
   | "Percentage10"
@@ -44,6 +48,16 @@ interface ParsingError {
   message: string;
 }
 
+class ImportError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+    public readonly details?: unknown,
+  ) {
+    super(message);
+  }
+}
+
 const DEFAULT_COLUMN_ALIASES: Record<CandidateColumnKey, string[]> = {
   RegistrationId: ["RegistrationId", "Registration ID", "Registration_Id", "RegId", "Reg ID", "Application No"],
   Name: ["Name", "Candidate Name", "CandidateName", "Student Name", "Applicant Name"],
@@ -51,6 +65,9 @@ const DEFAULT_COLUMN_ALIASES: Record<CandidateColumnKey, string[]> = {
   Father_Name: ["Father_Name", "Father Name", "FatherName", "Father's Name"],
   Mother_Name: ["Mother_Name", "Mother Name", "MotherName", "Mother's Name"],
   Category_Name: ["Category_Name", "Category Name", "CategoryName", "Category"],
+  Gender: ["Gender", "Sex"],
+  PinCode: ["Pin code", "Pin Code", "Pincode", "PIN", "Postal Code"],
+  Result: ["Result", "Resultetc", "Result etc", "Result Status", "Eligibility Result"],
   MarksObtained10: ["MarksObtained10", "Marks Obtained 10", "10th Marks Obtained", "Matric Marks Obtained"],
   TotalMarks10: ["TotalMarks10", "Total Marks 10", "10th Total Marks", "Matric Total Marks"],
   Percentage10: ["Percentage10", "Percentage 10", "10th Percentage", "Matric Percentage"],
@@ -116,9 +133,18 @@ const RESERVED_CATEGORY_TOKENS = [
   "phy",
 ];
 
-const requireAdmin = (request: { auth?: { token?: Record<string, unknown> } }) => {
-  if (request.auth?.token?.admin !== true) {
-    throw new HttpsError("permission-denied", "Only Admin users can import candidates.");
+const requireAdmin = async (req: { headers: { authorization?: string } }) => {
+  const authHeader = req.headers.authorization ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length) : "";
+
+  if (!token) {
+    throw new ImportError(401, "You must be signed in as an Admin user to import candidates.");
+  }
+
+  try {
+    return await admin.auth().verifyIdToken(token);
+  } catch {
+    throw new ImportError(401, "Invalid or expired Firebase Auth token.");
   }
 };
 
@@ -356,6 +382,9 @@ const mapCandidateRow = (
       motherName: normalizeString(getCell(row, lookup, "Mother_Name", columnMap)) || undefined,
       dateOfBirth: dob.display,
       dobTimestamp: admin.firestore.Timestamp.fromDate(dob.date),
+      gender: normalizeString(getCell(row, lookup, "Gender", columnMap)) || undefined,
+      pinCode: normalizeString(getCell(row, lookup, "PinCode", columnMap)) || undefined,
+      result: normalizeString(getCell(row, lookup, "Result", columnMap)) || undefined,
       category: effectiveCategoryName,
       originalCategoryName,
       effectiveCategoryName,
@@ -398,167 +427,205 @@ const assignMeritRanks = (candidates: Candidate[]): Candidate[] =>
       meritRank: index + 1,
     }));
 
-export const importCandidates = onCall<ImportCandidatesRequest>(async (request) => {
-  requireAdmin(request);
+export const importCandidates = onRequest(
+  {
+    cors: true,
+    region: "asia-southeast2",
+  },
+  async (req, res) => {
+    logger.info("Import request received", { body: req.body });
 
-  const { storagePath, bucketName, sheetName, dryRun = false, columnMap } = request.data;
-
-  if (!storagePath) {
-    throw new HttpsError("invalid-argument", "storagePath is required.");
-  }
-
-  const file = bucketName ? getStorage().bucket(bucketName).file(storagePath) : getStorage().bucket().file(storagePath);
-  const [exists] = await file.exists();
-
-  if (!exists) {
-    throw new HttpsError("not-found", `Excel file not found in Firebase Storage: ${storagePath}`);
-  }
-
-  let fileBuffer: Buffer;
-  try {
-    [fileBuffer] = await file.download();
-  } catch (error) {
-    throw new HttpsError("internal", "Failed to download Excel file from Firebase Storage.", {
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  let workbook: XLSX.WorkBook;
-  try {
-    workbook = XLSX.read(fileBuffer, { type: "buffer", cellDates: true });
-  } catch (error) {
-    throw new HttpsError("invalid-argument", "Uploaded file could not be read as an Excel workbook.", {
-      message: error instanceof Error ? error.message : String(error),
-    });
-  }
-
-  const selectedSheetName = sheetName ?? workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[selectedSheetName];
-
-  if (!worksheet) {
-    throw new HttpsError("invalid-argument", `Sheet not found: ${selectedSheetName}`);
-  }
-
-  const rows = XLSX.utils.sheet_to_json<CandidateImportRow>(worksheet, { defval: "", raw: true });
-
-  if (rows.length === 0) {
-    throw new HttpsError("invalid-argument", `Sheet has no candidate rows: ${selectedSheetName}`);
-  }
-
-  const now = admin.firestore.Timestamp.now();
-  const parsingErrors: ParsingError[] = [];
-  const parsedCandidates: Candidate[] = [];
-  const seenRegistrationIds = new Set<string>();
-
-  rows.forEach((row, index) => {
-    const result = mapCandidateRow(row, index + 2, now, columnMap);
-    if (result.error) {
-      parsingErrors.push(result.error);
+    if (req.method === "OPTIONS") {
+      res.status(204).send("");
       return;
     }
 
-    if (result.candidate) {
-      if (seenRegistrationIds.has(result.candidate.RegistrationId)) {
-        parsingErrors.push({
-          rowNumber: index + 2,
-          registrationId: result.candidate.RegistrationId,
-          message: "Duplicate RegistrationId in Excel file. This row was skipped.",
+    if (req.method !== "POST") {
+      res.status(405).json({ error: "Method not allowed. Use POST." });
+      return;
+    }
+
+    try {
+      const decodedToken = await requireAdmin(req);
+      const requestBody = (req.body?.data ?? req.body ?? {}) as ImportCandidatesRequest;
+
+      const { storagePath, bucketName, sheetName, dryRun = false, columnMap } = requestBody;
+
+      if (!storagePath) {
+        throw new ImportError(400, "storagePath is required.");
+      }
+
+      const file = bucketName
+        ? getStorage().bucket(bucketName).file(storagePath)
+        : getStorage().bucket().file(storagePath);
+      const [exists] = await file.exists();
+
+      if (!exists) {
+        throw new ImportError(404, `Excel file not found in Firebase Storage: ${storagePath}`);
+      }
+
+      let fileBuffer: Buffer;
+      try {
+        [fileBuffer] = await file.download();
+      } catch (error) {
+        throw new ImportError(500, "Failed to download Excel file from Firebase Storage.", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      let workbook: XLSX.WorkBook;
+      try {
+        workbook = XLSX.read(fileBuffer, { type: "buffer", cellDates: true });
+      } catch (error) {
+        throw new ImportError(400, "Uploaded file could not be read as an Excel workbook.", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      const selectedSheetName = sheetName ?? workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[selectedSheetName];
+
+      if (!worksheet) {
+        throw new ImportError(400, `Sheet not found: ${selectedSheetName}`);
+      }
+
+      const rows = XLSX.utils.sheet_to_json<CandidateImportRow>(worksheet, { defval: "", raw: true });
+
+      if (rows.length === 0) {
+        throw new ImportError(400, `Sheet has no candidate rows: ${selectedSheetName}`);
+      }
+
+      const now = admin.firestore.Timestamp.now();
+      const parsingErrors: ParsingError[] = [];
+      const parsedCandidates: Candidate[] = [];
+      const seenRegistrationIds = new Set<string>();
+
+      rows.forEach((row, index) => {
+        const result = mapCandidateRow(row, index + 2, now, columnMap);
+        if (result.error) {
+          parsingErrors.push(result.error);
+          return;
+        }
+
+        if (result.candidate) {
+          if (seenRegistrationIds.has(result.candidate.RegistrationId)) {
+            parsingErrors.push({
+              rowNumber: index + 2,
+              registrationId: result.candidate.RegistrationId,
+              message: "Duplicate RegistrationId in Excel file. This row was skipped.",
+            });
+            return;
+          }
+
+          seenRegistrationIds.add(result.candidate.RegistrationId);
+          parsedCandidates.push(result.candidate);
+        }
+      });
+
+      const candidates = assignMeritRanks(parsedCandidates);
+      const punjabDomicileCount = candidates.filter((candidate) => candidate.isPunjabDomicile).length;
+      const nonPunjabDomicileCount = candidates.length - punjabDomicileCount;
+      const categoryChangedToGeneralDueToNonDomicile = candidates.filter(
+        (candidate) => candidate.categoryChangedDueToDomicile,
+      ).length;
+      const top5Candidates = candidates.slice(0, 5).map((candidate) => ({
+        RegistrationId: candidate.RegistrationId,
+        name: candidate.candidateName,
+        meritRank: candidate.meritRank,
+        percentage12: candidate.percentage12,
+        percentage10: candidate.percentage10,
+        category: candidate.category,
+        originalCategoryName: candidate.originalCategoryName,
+        isPunjabDomicile: candidate.isPunjabDomicile,
+      }));
+
+      const summary = {
+        dryRun,
+        storagePath,
+        sheetName: selectedSheetName,
+        totalRowsRead: rows.length,
+        totalCandidatesImported: candidates.length,
+        punjabDomicileCount,
+        nonPunjabDomicileCount,
+        categoryChangedToGeneralDueToNonDomicile,
+        initializedSeatMatrixColleges: SEAT_MATRIX.length,
+        totalSeats: TOTAL_SEATS,
+        top5Candidates,
+        parsingErrors,
+      };
+
+      if (dryRun) {
+        res.status(200).json({ data: summary });
+        return;
+      }
+
+      const writes: Array<(batch: admin.firestore.WriteBatch) => void> = [];
+
+      for (const candidate of candidates) {
+        writes.push((batch) => {
+          batch.set(db.collection("candidates").doc(candidate.RegistrationId), candidate, { merge: true });
+        });
+      }
+
+      for (const college of SEAT_MATRIX) {
+        writes.push((batch) => {
+          batch.set(
+            db.collection("seatMatrix").doc(college.collegeName),
+            {
+              ...college,
+              filled: emptySeatCounts(),
+              remaining: college.seats,
+              createdAt: now,
+              updatedAt: now,
+            },
+            { merge: true },
+          );
+        });
+      }
+
+      writes.push((batch) => {
+        batch.set(
+          db.collection("settings").doc("global"),
+          {
+            counsellingSession: "2026-28",
+            sourceSeatMatrixSession: "2025-27",
+            currentRound: 1,
+            allotmentStatus: "draft",
+            liveDisplayEnabled: false,
+            candidateImportEnabled: true,
+            totalSeats: TOTAL_SEATS,
+            lastCandidateImport: {
+              storagePath,
+              sheetName: selectedSheetName,
+              importedCandidates: candidates.length,
+              parsingErrorCount: parsingErrors.length,
+              importedByUid: decodedToken.uid,
+              importedAt: now,
+            },
+            updatedByUid: decodedToken.uid,
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+      });
+
+      await commitInChunks(writes);
+
+      res.status(200).json({ data: summary });
+    } catch (error) {
+      logger.error("Import request failed", error);
+
+      if (error instanceof ImportError) {
+        res.status(error.status).json({
+          error: error.message,
+          details: error.details,
         });
         return;
       }
 
-      seenRegistrationIds.add(result.candidate.RegistrationId);
-      parsedCandidates.push(result.candidate);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : "Candidate import failed.",
+      });
     }
-  });
-
-  const candidates = assignMeritRanks(parsedCandidates);
-  const punjabDomicileCount = candidates.filter((candidate) => candidate.isPunjabDomicile).length;
-  const nonPunjabDomicileCount = candidates.length - punjabDomicileCount;
-  const categoryChangedToGeneralDueToNonDomicile = candidates.filter(
-    (candidate) => candidate.categoryChangedDueToDomicile,
-  ).length;
-  const top5Candidates = candidates.slice(0, 5).map((candidate) => ({
-    RegistrationId: candidate.RegistrationId,
-    name: candidate.candidateName,
-    meritRank: candidate.meritRank,
-    percentage12: candidate.percentage12,
-    percentage10: candidate.percentage10,
-    category: candidate.category,
-    originalCategoryName: candidate.originalCategoryName,
-    isPunjabDomicile: candidate.isPunjabDomicile,
-  }));
-
-  const summary = {
-    dryRun,
-    storagePath,
-    sheetName: selectedSheetName,
-    totalRowsRead: rows.length,
-    totalCandidatesImported: candidates.length,
-    punjabDomicileCount,
-    nonPunjabDomicileCount,
-    categoryChangedToGeneralDueToNonDomicile,
-    initializedSeatMatrixColleges: SEAT_MATRIX.length,
-    totalSeats: TOTAL_SEATS,
-    top5Candidates,
-    parsingErrors,
-  };
-
-  if (dryRun) {
-    return summary;
-  }
-
-  const writes: Array<(batch: admin.firestore.WriteBatch) => void> = [];
-
-  for (const candidate of candidates) {
-    writes.push((batch) => {
-      batch.set(db.collection("candidates").doc(candidate.RegistrationId), candidate, { merge: true });
-    });
-  }
-
-  for (const college of SEAT_MATRIX) {
-    writes.push((batch) => {
-      batch.set(
-        db.collection("seatMatrix").doc(college.collegeName),
-        {
-          ...college,
-          filled: emptySeatCounts(),
-          remaining: college.seats,
-          createdAt: now,
-          updatedAt: now,
-        },
-        { merge: true },
-      );
-    });
-  }
-
-  writes.push((batch) => {
-    batch.set(
-      db.collection("settings").doc("global"),
-      {
-        counsellingSession: "2026-28",
-        sourceSeatMatrixSession: "2025-27",
-        currentRound: 1,
-        allotmentStatus: "draft",
-        liveDisplayEnabled: false,
-        candidateImportEnabled: true,
-        totalSeats: TOTAL_SEATS,
-        lastCandidateImport: {
-          storagePath,
-          sheetName: selectedSheetName,
-          importedCandidates: candidates.length,
-          parsingErrorCount: parsingErrors.length,
-          importedByUid: request.auth?.uid,
-          importedAt: now,
-        },
-        updatedByUid: request.auth?.uid,
-        updatedAt: now,
-      },
-      { merge: true },
-    );
-  });
-
-  await commitInChunks(writes);
-
-  return summary;
-});
+  },
+);

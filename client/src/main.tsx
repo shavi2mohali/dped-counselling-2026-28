@@ -9,8 +9,10 @@ import {
   AdminHome,
   AdminPlaceholder,
 } from "./pages/AdminDashboard";
+import { CandidatesPage } from "./pages/CandidatesPage";
 import { HomePage } from "./pages/HomePage";
 import { LiveDisplay } from "./pages/LiveDisplay";
+import { LiveCounselingPanel } from "./pages/LiveCounselingPanel";
 import { LoginPage } from "./pages/LoginPage";
 import "./index.css";
 
@@ -41,7 +43,7 @@ const router = createBrowserRouter([
           },
           {
             path: "candidates",
-            element: <AdminPlaceholder title="Candidates" />,
+            element: <CandidatesPage />,
           },
           {
             path: "seat-matrix",
@@ -49,7 +51,7 @@ const router = createBrowserRouter([
           },
           {
             path: "counseling-control",
-            element: <AdminPlaceholder title="Counseling Control" />,
+            element: <LiveCounselingPanel />,
           },
         ],
       },

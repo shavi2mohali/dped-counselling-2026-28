@@ -39,6 +39,8 @@ export interface Candidate {
   gender?: string;
   mobile?: string;
   email?: string;
+  pinCode?: string;
+  result?: string;
   photoUrl?: string;
   category: CategoryColumn | string;
   originalCategoryName: string;

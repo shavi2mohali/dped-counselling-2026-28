@@ -1,6 +1,7 @@
 import { initializeApp, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
+import { getFunctions, type Functions } from "firebase/functions";
 import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -16,6 +17,7 @@ const firebaseConfig = {
 let firebaseApp: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let firestore: Firestore | null = null;
+let functions: Functions | null = null;
 let storage: FirebaseStorage | null = null;
 let firebaseInitializationError: string | null = null;
 
@@ -23,6 +25,7 @@ try {
   firebaseApp = initializeApp(firebaseConfig);
   auth = getAuth(firebaseApp);
   firestore = getFirestore(firebaseApp);
+  functions = getFunctions(firebaseApp);
   storage = getStorage(firebaseApp);
 } catch (error) {
   firebaseInitializationError =
@@ -44,6 +47,7 @@ export {
   firebaseApp,
   firebaseConfig,
   firebaseInitializationError,
+  functions,
   firestore,
   storage,
 };
@@ -56,6 +60,10 @@ export function getFirebaseAuth() {
 
 export function getFirebaseFirestore() {
   return requireFirebaseService(firestore, "Firestore");
+}
+
+export function getFirebaseFunctions() {
+  return requireFirebaseService(functions, "Cloud Functions");
 }
 
 export function getFirebaseStorage() {

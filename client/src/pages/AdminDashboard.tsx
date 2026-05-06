@@ -5,7 +5,7 @@ const navItems = [
   { to: "/admin", label: "Dashboard", end: true },
   { to: "/admin/candidates", label: "Candidates" },
   { to: "/admin/seat-matrix", label: "Seat Matrix" },
-  { to: "/admin/counseling-control", label: "Counseling Control" },
+  { to: "/admin/counseling-control", label: "Live Counseling" },
 ];
 
 function DashboardStatCard({ label, value, note }: { label: string; value: string; note: string }) {
