@@ -17,6 +17,7 @@ import {
   getCandidateRank,
   getCandidateDistrict,
   getEffectiveCategory,
+  getAvailableEligibleCategories,
   getEligibleCategories,
   getOriginalCategory,
   getPercentage12,
@@ -94,8 +95,13 @@ export function LiveCounselingPanel() {
   );
 
   const eligibleCategories = useMemo(
-    () => getEligibleCategories(currentCandidate, selectedCollege),
+    () => getAvailableEligibleCategories(currentCandidate, selectedCollege),
     [currentCandidate, selectedCollege],
+  );
+
+  const candidateEligibleCategories = useMemo(
+    () => getEligibleCategories(currentCandidate),
+    [currentCandidate],
   );
 
   const collegesWithAvailableSeats = useMemo(() => seatMatrix.filter(hasAnyRemainingSeat), [seatMatrix]);
@@ -244,16 +250,22 @@ export function LiveCounselingPanel() {
           }
 
           const seatData = seatSnapshot.data() as typeof selectedCollege;
-          const remaining = seatData.remaining?.[selectedCategory] ?? seatData.seats?.[selectedCategory] ?? 0;
-          const filled = seatData.filled?.[selectedCategory] ?? 0;
+          const categoryKey =
+            selectedCategory === "Physically Handicapped" &&
+            seatData.remaining?.["Physically Handicapped"] === undefined &&
+            seatData.seats?.["Physically Handicapped"] === undefined
+              ? ("Phy Handicapped" as CategoryColumn)
+              : selectedCategory;
+          const remaining = seatData.remaining?.[categoryKey] ?? seatData.seats?.[categoryKey] ?? 0;
+          const filled = seatData.filled?.[categoryKey] ?? 0;
 
           if (remaining <= 0) {
             throw new Error(`${selectedCategory} seats are full at ${selectedCollege.collegeName}.`);
           }
 
           transaction.update(seatRef, {
-            [`remaining.${selectedCategory}`]: remaining - 1,
-            [`filled.${selectedCategory}`]: filled + 1,
+            [`remaining.${categoryKey}`]: remaining - 1,
+            [`filled.${categoryKey}`]: filled + 1,
             updatedAt: serverTimestamp(),
           });
 
@@ -269,6 +281,7 @@ export function LiveCounselingPanel() {
             candidateName: getCandidateName(currentCandidate),
             collegeName: selectedCollege.collegeName,
             category: selectedCategory,
+            seatMatrixCategoryKey: categoryKey,
             action: "allotted",
             performedByUid: user?.uid ?? "unknown",
             performedByEmail: user?.email ?? "",
@@ -364,9 +377,14 @@ export function LiveCounselingPanel() {
                 />
               </div>
 
-              {currentCandidate.isPunjabDomicile === false ? (
-                <StatusMessage tone="info" message="Reservation validation active: Non-Punjab candidates can only get General seats." />
-              ) : null}
+            {currentCandidate.isPunjabDomicile === false ? (
+              <StatusMessage tone="info" message="Reservation validation active: Non-Punjab candidates can only get General seats." />
+            ) : (
+              <StatusMessage
+                tone="info"
+                message={`Eligible categories for this candidate: ${candidateEligibleCategories.join(", ")}`}
+              />
+            )}
             </div>
           ) : (
             <div className="flex min-h-80 items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 text-center">

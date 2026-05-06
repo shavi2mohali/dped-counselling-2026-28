@@ -12,7 +12,7 @@ export const categoryColumns = [
   "General (FF)",
   "Gen (Sports)",
   "SC (Sports)",
-  "Phy Handicapped",
+  "Physically Handicapped",
 ] as const;
 
 export type CategoryColumn = (typeof categoryColumns)[number];
@@ -90,6 +90,33 @@ export function getEffectiveCategory(candidate: Candidate) {
   return candidate.effectiveCategoryName ?? candidate.effectiveCategory ?? candidate.category ?? "General";
 }
 
+function normalizeCategory(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export function mapToOfficialCategory(category: string): CategoryColumn {
+  const normalized = normalizeCategory(category);
+
+  if (!normalized || normalized === "general" || normalized === "gen") return "General";
+  if (normalized.includes("ews")) return "EWS";
+  if (normalized === "bc" || normalized.includes("backwardclass")) return "BC";
+  if (normalized.includes("sc") && normalized.includes("sports")) return "SC (Sports)";
+  if ((normalized.includes("gen") || normalized.includes("general")) && normalized.includes("sports")) {
+    return "Gen (Sports)";
+  }
+  if (normalized.includes("sc") && normalized.includes("ro")) return "SC (RO)";
+  if (normalized.includes("sc") && normalized.includes("mb")) return "SC(MB)";
+  if (normalized.includes("ex") && normalized.includes("bc")) return "Ex serviceman (BC)";
+  if (normalized.includes("ex") && normalized.includes("sc")) return "Ex serviceman (SC)";
+  if (normalized.includes("ex")) return "Ex serviceman (Gen)";
+  if (normalized.includes("ff") || normalized.includes("freedomfighter")) return "General (FF)";
+  if (normalized.includes("handicapped") || normalized.includes("pwd") || normalized.includes("physically")) {
+    return "Physically Handicapped";
+  }
+
+  return "General";
+}
+
 export function getPercentage12(candidate: Candidate) {
   return candidate.percentage12 ?? candidate.Percentage12;
 }
@@ -108,33 +135,46 @@ export function sortByMeritRank(candidates: Candidate[]) {
 }
 
 export function getSeatRemaining(college: SeatMatrixEntry, category: CategoryColumn) {
+  if (category === "Physically Handicapped") {
+    return college.remaining?.[category] ?? college.remaining?.["Phy Handicapped" as CategoryColumn] ?? college.seats?.[category] ?? college.seats?.["Phy Handicapped" as CategoryColumn] ?? 0;
+  }
+
   return college.remaining?.[category] ?? college.seats?.[category] ?? 0;
 }
 
 export function getSeatFilled(college: SeatMatrixEntry, category: CategoryColumn) {
+  if (category === "Physically Handicapped") {
+    return college.filled?.[category] ?? college.filled?.["Phy Handicapped" as CategoryColumn] ?? 0;
+  }
+
   return college.filled?.[category] ?? 0;
 }
 
-export function getEligibleCategories(candidate: Candidate | null, college: SeatMatrixEntry | null) {
+export function getEligibleCategories(candidate: Candidate | null): CategoryColumn[] {
+  if (!candidate) {
+    return [];
+  }
+
+  if (candidate.isPunjabDomicile === false) {
+    return ["General"];
+  }
+
+  const candidateCategory = mapToOfficialCategory(getEffectiveCategory(candidate) || getOriginalCategory(candidate));
+  const eligibleCategories = new Set<CategoryColumn>(["General"]);
+
+  if (candidateCategory !== "General") {
+    eligibleCategories.add(candidateCategory);
+  }
+
+  return Array.from(eligibleCategories);
+}
+
+export function getAvailableEligibleCategories(candidate: Candidate | null, college: SeatMatrixEntry | null): CategoryColumn[] {
   if (!candidate || !college) {
     return [];
   }
 
-  const availableCategories = categoryColumns.filter((category) => getSeatRemaining(college, category) > 0);
-
-  // Reservation rule: non-Punjab domicile candidates can only be allotted General seats.
-  if (candidate.isPunjabDomicile === false) {
-    return availableCategories.filter((category) => category === "General");
-  }
-
-  const effectiveCategory = getEffectiveCategory(candidate);
-  const allowed = new Set<CategoryColumn>(["General"]);
-
-  if (categoryColumns.includes(effectiveCategory as CategoryColumn)) {
-    allowed.add(effectiveCategory as CategoryColumn);
-  }
-
-  return availableCategories.filter((category) => allowed.has(category));
+  return getEligibleCategories(candidate).filter((category) => getSeatRemaining(college, category) > 0);
 }
 
 export function formatPercent(value: number | undefined) {
