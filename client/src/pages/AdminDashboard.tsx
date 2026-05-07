@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
+import { RecalculateRanksButton } from "../components/RecalculateRanksButton";
 import { useAuth } from "../hooks/useAuth";
 
 const navItems = [
@@ -6,6 +7,7 @@ const navItems = [
   { to: "/admin/candidates", label: "Candidates" },
   { to: "/admin/seat-matrix", label: "Seat Matrix" },
   { to: "/admin/counseling-control", label: "Live Counseling" },
+  { to: "/admin/reports", label: "Reports" },
 ];
 
 function DashboardStatCard({ label, value, note }: { label: string; value: string; note: string }) {
@@ -42,6 +44,8 @@ export function AdminHome() {
           Authentication, protected routing, sidebar navigation, and dashboard shell are now in place.
         </p>
       </div>
+
+      <RecalculateRanksButton />
     </div>
   );
 }

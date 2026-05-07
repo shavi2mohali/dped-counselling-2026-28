@@ -14,6 +14,7 @@ import { HomePage } from "./pages/HomePage";
 import { LiveDisplay } from "./pages/LiveDisplay";
 import { LiveCounselingPanel } from "./pages/LiveCounselingPanel";
 import { LoginPage } from "./pages/LoginPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import "./index.css";
 
 const router = createBrowserRouter([
@@ -52,6 +53,10 @@ const router = createBrowserRouter([
           {
             path: "counseling-control",
             element: <LiveCounselingPanel />,
+          },
+          {
+            path: "reports",
+            element: <ReportsPage />,
           },
         ],
       },

@@ -44,6 +44,19 @@ interface CleanCandidate {
   updatedAt: FieldValue;
 }
 
+interface StoredCandidate {
+  registrationId?: string;
+  RegistrationId?: string;
+  name?: string;
+  candidateName?: string;
+  percentage10?: number;
+  Percentage10?: number;
+  percentage12?: number;
+  Percentage12?: number;
+  dob?: string;
+  dateOfBirth?: string;
+}
+
 interface ParsingError {
   rowNumber: number;
   registrationId?: string;
@@ -270,6 +283,28 @@ const assignRanks = (candidates: CleanCandidate[]): CleanCandidate[] =>
       rank: index + 1,
     }));
 
+const getStoredCandidatePercentage10 = (candidate: StoredCandidate): number =>
+  cleanNumber(candidate.percentage10 ?? candidate.Percentage10);
+
+const getStoredCandidatePercentage12 = (candidate: StoredCandidate): number =>
+  cleanNumber(candidate.percentage12 ?? candidate.Percentage12);
+
+const getStoredCandidateDobTime = (candidate: StoredCandidate): number => {
+  const dob = cleanString(candidate.dob ?? candidate.dateOfBirth);
+  if (!dob) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  const parsed = new Date(dob).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+};
+
+const getStoredCandidateRegistrationId = (candidate: StoredCandidate): string =>
+  cleanString(candidate.registrationId ?? candidate.RegistrationId);
+
+const getStoredCandidateName = (candidate: StoredCandidate): string =>
+  cleanString(candidate.name ?? candidate.candidateName);
+
 const commitInChunks = async (writes: Array<(batch: WriteBatch) => void>) => {
   const chunkSize = 450;
 
@@ -481,6 +516,127 @@ export const importCandidates = onRequest(
       res.status(500).json({
         success: false,
         error: error instanceof Error ? error.message : "Import failed",
+      });
+    }
+  },
+);
+
+export const assignMeritRanks = onRequest(
+  {
+    cors: robustCorsOptions as unknown as true,
+    region: "asia-south2",
+    timeoutSeconds: 300,
+    memory: "1GiB",
+  },
+  async (req, res) => {
+    setCorsHeaders(res);
+
+    if (req.method === "OPTIONS") {
+      res.status(204).send("");
+      return;
+    }
+
+    if (req.method !== "POST") {
+      res.status(405).json({ success: false, error: "Method not allowed. Use POST." });
+      return;
+    }
+
+    try {
+      const decodedToken = await requireSignedInUser(req);
+      logger.info("Starting merit rank recalculation", {
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+      });
+
+      const snapshot = await db.collection("candidates").get();
+      const rankedCandidates = snapshot.docs
+        .map((candidateDoc) => ({
+          id: candidateDoc.id,
+          data: candidateDoc.data() as StoredCandidate,
+        }))
+        .sort((left, right) => {
+          const percentage12Difference =
+            getStoredCandidatePercentage12(right.data) - getStoredCandidatePercentage12(left.data);
+          if (percentage12Difference !== 0) {
+            return percentage12Difference;
+          }
+
+          const dobDifference = getStoredCandidateDobTime(left.data) - getStoredCandidateDobTime(right.data);
+          if (dobDifference !== 0) {
+            return dobDifference;
+          }
+
+          return getStoredCandidatePercentage10(right.data) - getStoredCandidatePercentage10(left.data);
+        })
+        .map((candidate, index) => ({
+          ...candidate,
+          rank: index + 1,
+        }));
+
+      const writes: Array<(batch: WriteBatch) => void> = [];
+      rankedCandidates.forEach((candidate) => {
+        writes.push((batch) => {
+          batch.set(
+            db.collection("candidates").doc(candidate.id),
+            {
+              rank: candidate.rank,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        });
+      });
+
+      writes.push((batch) => {
+        batch.set(
+          db.collection("settings").doc("global"),
+          {
+            lastRankCalculation: {
+              totalCandidates: rankedCandidates.length,
+              calculatedByUid: decodedToken.uid,
+              calculatedByEmail: decodedToken.email ?? "",
+              calculatedAt: FieldValue.serverTimestamp(),
+            },
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      });
+
+      await commitInChunks(writes);
+
+      const summary = {
+        success: true,
+        totalCandidates: rankedCandidates.length,
+        totalUpdated: rankedCandidates.length,
+        top5Candidates: rankedCandidates.slice(0, 5).map((candidate) => ({
+          registrationId: getStoredCandidateRegistrationId(candidate.data) || candidate.id,
+          name: getStoredCandidateName(candidate.data),
+          rank: candidate.rank,
+          percentage12: getStoredCandidatePercentage12(candidate.data),
+          percentage10: getStoredCandidatePercentage10(candidate.data),
+          dob: cleanString(candidate.data.dob ?? candidate.data.dateOfBirth),
+        })),
+        message: "Merit ranks recalculated successfully",
+      };
+
+      logger.info("Merit rank recalculation completed", summary);
+      res.status(200).json({ data: summary });
+    } catch (error) {
+      logger.error("Merit rank recalculation failed", error);
+
+      if (error instanceof ImportError) {
+        res.status(error.status).json({
+          success: false,
+          error: error.message,
+          details: error.details,
+        });
+        return;
+      }
+
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Rank recalculation failed",
       });
     }
   },

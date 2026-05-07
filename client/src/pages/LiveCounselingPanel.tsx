@@ -19,10 +19,12 @@ import {
   getEffectiveCategory,
   getAvailableEligibleCategories,
   getEligibleCategories,
+  getNextCandidateForCall,
   getOriginalCategory,
   getPercentage12,
   getSeatFilled,
   getSeatRemaining,
+  isDeferredForCall,
   isPendingForCall,
   type Candidate,
   type CategoryColumn,
@@ -107,7 +109,11 @@ export function LiveCounselingPanel() {
   const collegesWithAvailableSeats = useMemo(() => seatMatrix.filter(hasAnyRemainingSeat), [seatMatrix]);
 
   const nextCandidates = useMemo(
-    () => candidates.filter(isPendingForCall).slice(0, 6),
+    () => {
+      const pendingCandidates = candidates.filter(isPendingForCall);
+      const deferredCandidates = pendingCandidates.length === 0 ? candidates.filter(isDeferredForCall) : [];
+      return [...pendingCandidates, ...deferredCandidates].slice(0, 6);
+    },
     [candidates],
   );
 
@@ -140,39 +146,43 @@ export function LiveCounselingPanel() {
     }
   };
 
+  const callCandidate = async (candidate: Candidate) => {
+    const candidateId = getCandidateId(candidate);
+
+    if (!candidateId) {
+      throw new Error("Next candidate does not have a valid RegistrationId.");
+    }
+
+    await updateDoc(doc(firestore, "candidates", candidateId), {
+      status: "called",
+      calledAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    await setDoc(
+      doc(firestore, "settings", "liveCounseling"),
+      {
+        currentCandidateRegistrationId: candidateId,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    setSelectedCollegeId("");
+    setSelectedCategory("");
+  };
+
   const callNextCandidate = () =>
     runAction(
       "calling",
       async () => {
-        const nextCandidate = candidates.find(isPendingForCall);
+        const nextCandidate = getNextCandidateForCall(candidates);
 
         if (!nextCandidate) {
-          throw new Error("No pending candidate is available to call.");
+          throw new Error("No pending, waiting, or skipped candidate is available to call.");
         }
 
-        const candidateId = getCandidateId(nextCandidate);
-
-        if (!candidateId) {
-          throw new Error("Next candidate does not have a valid RegistrationId.");
-        }
-
-        await updateDoc(doc(firestore, "candidates", candidateId), {
-          status: "called",
-          calledAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        await setDoc(
-          doc(firestore, "settings", "liveCounseling"),
-          {
-            currentCandidateRegistrationId: candidateId,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
-
-        setSelectedCollegeId("");
-        setSelectedCategory("");
+        await callCandidate(nextCandidate);
       },
       "Next candidate called by overall merit rank.",
     );
@@ -187,19 +197,54 @@ export function LiveCounselingPanel() {
           throw new Error("Current candidate does not have a valid RegistrationId.");
         }
 
-        await updateDoc(doc(firestore, "candidates", candidateId), {
-          status,
-          updatedAt: serverTimestamp(),
-        });
+        const nextCandidate =
+          status === "skipped"
+            ? getNextCandidateForCall(candidates.filter((queueCandidate) => getCandidateId(queueCandidate) !== candidateId))
+            : null;
 
-        await setDoc(
-          doc(firestore, "settings", "liveCounseling"),
-          {
-            currentCandidateRegistrationId: null,
+        if (nextCandidate) {
+          const nextCandidateId = getCandidateId(nextCandidate);
+
+          if (!nextCandidateId) {
+            throw new Error("Next candidate does not have a valid RegistrationId.");
+          }
+
+          await runTransaction(firestore, async (transaction) => {
+            transaction.update(doc(firestore, "candidates", candidateId), {
+              status,
+              updatedAt: serverTimestamp(),
+            });
+
+            transaction.update(doc(firestore, "candidates", nextCandidateId), {
+              status: "called",
+              calledAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+
+            transaction.set(
+              doc(firestore, "settings", "liveCounseling"),
+              {
+                currentCandidateRegistrationId: nextCandidateId,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            );
+          });
+        } else {
+          await updateDoc(doc(firestore, "candidates", candidateId), {
+            status,
             updatedAt: serverTimestamp(),
-          },
-          { merge: true },
-        );
+          });
+
+          await setDoc(
+            doc(firestore, "settings", "liveCounseling"),
+            {
+              currentCandidateRegistrationId: null,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
 
         setSelectedCollegeId("");
         setSelectedCategory("");
@@ -208,7 +253,7 @@ export function LiveCounselingPanel() {
         ? "Candidate marked absent."
         : status === "waiting"
           ? "Candidate moved to waiting."
-          : "Candidate skipped for now.",
+          : "Candidate skipped. Next candidate called automatically.",
     );
 
   const allotSeat = () =>

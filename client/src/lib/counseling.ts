@@ -127,7 +127,16 @@ export function getCandidateDistrict(candidate: Candidate) {
 
 export function isPendingForCall(candidate: Candidate) {
   const status = candidate.status ?? "pending";
-  return ["pending", "registered", "eligible", "waiting", "skipped"].includes(status);
+  return status === "pending";
+}
+
+export function isDeferredForCall(candidate: Candidate) {
+  const status = candidate.status ?? "pending";
+  return status === "waiting" || status === "skipped";
+}
+
+export function getNextCandidateForCall(candidates: Candidate[]) {
+  return candidates.find(isPendingForCall) ?? candidates.find(isDeferredForCall) ?? null;
 }
 
 export function sortByMeritRank(candidates: Candidate[]) {
