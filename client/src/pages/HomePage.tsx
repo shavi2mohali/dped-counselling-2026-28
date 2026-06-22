@@ -46,6 +46,12 @@ export function HomePage() {
               >
                 Live Display Screen
               </Link>
+              <Link
+                to="/college/login"
+                className="inline-flex min-h-14 items-center justify-center rounded-md border border-slate-300 bg-white px-8 text-base font-bold text-slate-700 shadow-sm transition hover:bg-slate-50"
+              >
+                College Login
+              </Link>
             </div>
           </div>
 

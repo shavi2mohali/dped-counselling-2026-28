@@ -1,15 +1,14 @@
-import type { ReactNode } from "react";
 import { doc, getDoc } from "firebase/firestore";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { getFirebaseFirestore } from "../lib/firebase";
 
-export function ProtectedRoute({ children }: { children: ReactNode }) {
+export function CollegeProtectedRoute({ children }: { children: ReactNode }) {
   const { loading, user } = useAuth();
   const location = useLocation();
-  const [checkingRole, setCheckingRole] = useState(true);
-  const [isCollegeUser, setIsCollegeUser] = useState(false);
+  const [checkingCollege, setCheckingCollege] = useState(true);
+  const [hasCollegeProfile, setHasCollegeProfile] = useState(false);
 
   useEffect(() => {
     if (loading) {
@@ -17,8 +16,8 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     }
 
     if (!user) {
-      setCheckingRole(false);
-      setIsCollegeUser(false);
+      setCheckingCollege(false);
+      setHasCollegeProfile(false);
       return undefined;
     }
 
@@ -30,16 +29,16 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
           return;
         }
 
-        setIsCollegeUser(snapshot.exists());
-        setCheckingRole(false);
+        setHasCollegeProfile(snapshot.exists() && snapshot.data().isActive !== false);
+        setCheckingCollege(false);
       })
       .catch(() => {
         if (!active) {
           return;
         }
 
-        setIsCollegeUser(false);
-        setCheckingRole(false);
+        setHasCollegeProfile(false);
+        setCheckingCollege(false);
       });
 
     return () => {
@@ -47,22 +46,22 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
     };
   }, [loading, user]);
 
-  if (loading || checkingRole) {
+  if (loading || checkingCollege) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50">
         <div className="rounded-lg border border-blue-100 bg-white px-6 py-4 text-sm font-semibold text-slate-700 shadow-sm">
-          Checking admin session...
+          Checking college session...
         </div>
       </div>
     );
   }
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location }} />;
+    return <Navigate to="/college/login" replace state={{ from: location }} />;
   }
 
-  if (isCollegeUser) {
-    return <Navigate to="/college/dashboard" replace />;
+  if (!hasCollegeProfile) {
+    return <Navigate to="/college/login" replace state={{ from: location, error: "College profile not found." }} />;
   }
 
   return children;

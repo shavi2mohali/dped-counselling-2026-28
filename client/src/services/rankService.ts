@@ -4,6 +4,7 @@ export interface AssignMeritRanksSummary {
   success: boolean;
   totalCandidates: number;
   totalUpdated: number;
+  timeTakenMs: number;
   message: string;
   top5Candidates: Array<{
     registrationId: string;

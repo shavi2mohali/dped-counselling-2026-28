@@ -6,25 +6,76 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Development rule: any signed-in Firebase Auth user can read/write app data.
-    // Replace with custom admin claims before production launch.
+    function isCollegeUser() {
+      return signedIn() && exists(/databases/$(database)/documents/colleges/$(request.auth.uid));
+    }
+
+    function collegeProfile() {
+      return get(/databases/$(database)/documents/colleges/$(request.auth.uid)).data;
+    }
+
+    // Development fallback keeps existing admin accounts working if they do not have a college profile.
+    // For production, remove "|| !isCollegeUser()" after adding admin custom claims or admins/{uid} docs.
+    function isAdminUser() {
+      return signedIn()
+        && (
+          request.auth.token.admin == true
+          || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+          || !isCollegeUser()
+        );
+    }
+
+    function isAllottedToSignedInCollege() {
+      return isCollegeUser()
+        && resource.data.allottedCollegeId == collegeProfile().collegeName;
+    }
+
+    function collegeJoiningUpdateOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        "status",
+        "joinedStatus",
+        "joinedUpdatedAt",
+        "joinedUpdatedByUid",
+        "joinedUpdatedByEmail",
+        "updatedAt"
+      ])
+      && request.resource.data.status in ["joined", "notJoined"]
+      && request.resource.data.joinedStatus in ["joined", "notJoined"]
+      && request.resource.data.joinedUpdatedByUid == request.auth.uid
+      && request.resource.data.allottedCollegeId == resource.data.allottedCollegeId;
+    }
+
     match /candidates/{registrationId} {
+      // Public read is kept for the existing no-login Live Display screen.
+      // College writes are still restricted to their own allotted candidates.
       allow read: if true;
-      allow write: if signedIn();
+      allow create, delete: if isAdminUser();
+      allow update: if isAdminUser()
+        || (isAllottedToSignedInCollege() && collegeJoiningUpdateOnly());
     }
 
     match /seatMatrix/{collegeName} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if isAdminUser();
     }
 
     match /allotments/{allotmentId} {
-      allow read, write: if signedIn();
+      allow read, write: if isAdminUser();
     }
 
     match /settings/{settingId} {
       allow read: if true;
-      allow write: if signedIn();
+      allow write: if isAdminUser();
+    }
+
+    match /colleges/{collegeUid} {
+      allow read: if isAdminUser() || (signedIn() && request.auth.uid == collegeUid);
+      allow create, update, delete: if isAdminUser();
+    }
+
+    match /admins/{adminUid} {
+      allow read: if signedIn() && request.auth.uid == adminUid;
+      allow write: if isAdminUser();
     }
 
     match /{document=**} {

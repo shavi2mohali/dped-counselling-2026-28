@@ -71,11 +71,13 @@ export function ReportsPage() {
 
   const stats = useMemo(() => {
     const allotted = candidates.filter((candidate) => candidate.status === "allotted").length;
+    const joined = candidates.filter((candidate) => candidate.status === "joined").length;
+    const notJoined = candidates.filter((candidate) => candidate.status === "notJoined").length;
     const pending = candidates.filter((candidate) => (candidate.status ?? "pending") === "pending").length;
     const absent = candidates.filter((candidate) => candidate.status === "absent").length;
     const punjab = candidates.filter((candidate) => candidate.isPunjabDomicile).length;
 
-    return { absent, allotted, pending, punjab, total: candidates.length };
+    return { absent, allotted, joined, notJoined, pending, punjab, total: candidates.length };
   }, [candidates]);
 
   const collegeSummary = useMemo(
@@ -121,7 +123,7 @@ export function ReportsPage() {
     downloadCsv("final-allotment-list.csv", [
       ["Rank", "RegistrationId", "Name", "College", "Category", "Status"],
       ...candidates
-        .filter((candidate) => candidate.status === "allotted")
+        .filter((candidate) => ["allotted", "joined", "notJoined"].includes(candidate.status ?? ""))
         .sort((left, right) => getCandidateRank(left) - getCandidateRank(right))
         .map((candidate) => [
           getCandidateRank(candidate),
@@ -174,10 +176,12 @@ export function ReportsPage() {
 
       {error ? <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-800">{error}</div> : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-7">
         <StatCard label="Total Candidates" value={stats.total} />
         <StatCard label="Pending" value={stats.pending} />
         <StatCard label="Allotted" value={stats.allotted} />
+        <StatCard label="Joined" value={stats.joined} />
+        <StatCard label="Not Joined" value={stats.notJoined} />
         <StatCard label="Absent" value={stats.absent} />
         <StatCard label="Punjab Domicile" value={stats.punjab} />
       </div>

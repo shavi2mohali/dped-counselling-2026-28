@@ -22,7 +22,6 @@ import {
   getNextCandidateForCall,
   getOriginalCategory,
   getPercentage12,
-  getSeatFilled,
   getSeatRemaining,
   isDeferredForCall,
   isPendingForCall,
@@ -36,9 +35,9 @@ type ActionState = "idle" | "calling" | "allotting" | "absent" | "waiting" | "sk
 
 function CandidateDetail({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-      <p className="text-sm font-bold uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 text-2xl font-black text-slate-950">{value}</p>
+    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-1 text-xl font-black text-slate-950">{value}</p>
     </div>
   );
 }
@@ -63,11 +62,84 @@ function getSeatTone(remaining: number) {
     return "border-red-300 bg-red-50 text-red-800";
   }
 
-  if (remaining <= 2) {
-    return "border-amber-300 bg-amber-50 text-amber-800";
-  }
-
   return "border-emerald-300 bg-emerald-50 text-emerald-800";
+}
+
+function CandidateSpecificVacancyPanel({
+  currentCandidate,
+  displaySeatCategories,
+  relevantRemainingSeats,
+  seatMatrix,
+}: {
+  currentCandidate: Candidate | null;
+  displaySeatCategories: CategoryColumn[];
+  relevantRemainingSeats: number;
+  seatMatrix: SeatMatrixEntry[];
+}) {
+  return (
+    <section className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+      <div className="mb-3 flex flex-col gap-1 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <h3 className="text-xl font-black text-govt-900">Available Seats for this Candidate</h3>
+          <p className="text-sm font-bold text-govt-700">
+            {currentCandidate
+              ? `${getCandidateName(currentCandidate)} · ${displaySeatCategories.join(", ")}`
+              : "Call a candidate to show eligible categories."}
+          </p>
+        </div>
+        <p className="rounded-full bg-white px-3 py-1 text-sm font-black text-govt-800">
+          Total: {currentCandidate ? relevantRemainingSeats : "-"}
+        </p>
+      </div>
+
+      {currentCandidate ? (
+        <div className="max-h-[640px] overflow-auto rounded-lg border border-blue-100 bg-white">
+          <table className="min-w-[620px] divide-y divide-slate-200 text-sm">
+            <thead className="sticky top-0 z-10 bg-slate-50">
+              <tr>
+                <th className="px-3 py-2 text-left text-xs font-black uppercase tracking-wide text-slate-600">
+                  College
+                </th>
+                {displaySeatCategories.map((category) => (
+                  <th key={category} className="px-3 py-2 text-center text-xs font-black uppercase tracking-wide text-slate-600">
+                    {category}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {seatMatrix.map((college) => (
+                <tr key={college.id}>
+                  <td className="max-w-72 px-3 py-1.5 text-sm font-black text-slate-950">{college.collegeName}</td>
+                  {displaySeatCategories.map((category) => {
+                    const remaining = getSeatRemaining(college, category);
+                    return (
+                      <td key={category} className="px-3 py-1.5 text-center">
+                        <div
+                          className={[
+                            "mx-auto min-w-16 rounded-lg border px-3 py-1",
+                            getSeatTone(remaining),
+                          ].join(" ")}
+                        >
+                          <p className="text-2xl font-black">{remaining}</p>
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="flex min-h-32 items-center justify-center rounded-lg border-2 border-dashed border-blue-200 bg-white text-center">
+          <p className="px-4 text-sm font-bold text-slate-500">
+            Candidate-specific vacancies will appear here after pressing Call Next Candidate.
+          </p>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function LiveCounselingPanel() {
@@ -106,7 +178,18 @@ export function LiveCounselingPanel() {
     [currentCandidate],
   );
 
-  const collegesWithAvailableSeats = useMemo(() => seatMatrix.filter(hasAnyRemainingSeat), [seatMatrix]);
+  const displaySeatCategories = useMemo(
+    () => (currentCandidate ? getEligibleCategories(currentCandidate) : []),
+    [currentCandidate],
+  );
+
+  const collegesWithAvailableSeats = useMemo(
+    () =>
+      currentCandidate
+        ? seatMatrix.filter((college) => getAvailableEligibleCategories(currentCandidate, college).length > 0)
+        : seatMatrix.filter(hasAnyRemainingSeat),
+    [currentCandidate, seatMatrix],
+  );
 
   const nextCandidates = useMemo(
     () => {
@@ -126,6 +209,33 @@ export function LiveCounselingPanel() {
       ),
     [seatMatrix],
   );
+
+  const candidateRelevantRemainingSeats = useMemo(
+    () =>
+      seatMatrix.reduce(
+        (sum, college) =>
+          sum +
+          displaySeatCategories.reduce(
+            (categorySum, category) => categorySum + getSeatRemaining(college, category),
+            0,
+          ),
+        0,
+      ),
+    [displaySeatCategories, seatMatrix],
+  );
+
+  const currentCandidateAccent =
+    currentCandidate?.isPunjabDomicile === false
+      ? {
+          card: "border-blue-300 bg-blue-50",
+          header: "bg-govt-900",
+          pill: "bg-white text-govt-800",
+        }
+      : {
+          card: "border-emerald-300 bg-emerald-50",
+          header: "bg-emerald-800",
+          pill: "bg-white text-emerald-800",
+        };
 
   useEffect(() => {
     setSelectedCategory("");
@@ -366,11 +476,11 @@ export function LiveCounselingPanel() {
       <header className="rounded-xl border border-blue-100 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <p className="text-base font-black uppercase tracking-wide text-govt-700">Live Counseling Control</p>
-            <h1 className="mt-1 text-4xl font-black text-slate-950 md:text-5xl">
+            <p className="text-sm font-black uppercase tracking-wide text-govt-700">Live Counseling Control</p>
+            <h1 className="mt-1 text-3xl font-black text-slate-950 md:text-4xl">
               DPEd 2026-28 Counseling - Live Session
             </h1>
-            <p className="mt-2 text-lg font-semibold text-slate-600">
+            <p className="mt-2 text-base font-semibold text-slate-600">
               Call candidates by merit rank, allot seats, and update the public workflow in real time.
             </p>
           </div>
@@ -379,7 +489,7 @@ export function LiveCounselingPanel() {
             type="button"
             onClick={callNextCandidate}
             disabled={actionInProgress}
-            className="min-h-20 rounded-xl bg-govt-700 px-10 text-2xl font-black text-white shadow-sm transition hover:bg-govt-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="min-h-16 rounded-xl bg-govt-700 px-8 text-xl font-black text-white shadow-sm transition hover:bg-govt-800 disabled:cursor-not-allowed disabled:bg-slate-300"
           >
             {actionState === "calling" ? "Calling..." : "Call Next Candidate"}
           </button>
@@ -390,28 +500,28 @@ export function LiveCounselingPanel() {
       {error ? <StatusMessage tone="error" message={error} /> : null}
       {message ? <StatusMessage tone="success" message={message} /> : null}
 
-      <section className="grid gap-6 2xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,0.8fr)]">
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="mb-5 flex items-center justify-between gap-4">
+      <section className="grid gap-6 2xl:grid-cols-[minmax(0,0.72fr)_minmax(600px,1.28fr)]">
+        <div className={`min-h-[850px] rounded-xl border p-5 shadow-sm ${currentCandidateAccent.card}`}>
+          <div className="mb-4 flex items-center justify-between gap-4">
             <h2 className="text-2xl font-black text-slate-950">Current Candidate</h2>
-            <div className="rounded-full bg-blue-50 px-4 py-2 text-base font-black text-govt-800">
+            <div className={`rounded-full px-4 py-2 text-sm font-black ${currentCandidateAccent.pill}`}>
               Remaining Seats: {totalRemainingSeats}
             </div>
           </div>
 
           {currentCandidate ? (
-            <div className="space-y-5">
-              <div className="rounded-xl bg-govt-900 p-6 text-white">
-                <p className="text-lg font-bold uppercase tracking-wide text-blue-100">
+            <div className="space-y-4">
+              <div className={`rounded-xl p-5 text-white ${currentCandidateAccent.header}`}>
+                <p className="text-base font-bold uppercase tracking-wide text-blue-100">
                   Rank {getCandidateRank(currentCandidate)}
                 </p>
-                <h3 className="mt-2 text-5xl font-black leading-tight">{getCandidateName(currentCandidate)}</h3>
-                <p className="mt-3 text-xl font-semibold text-blue-100">
+                <h3 className="mt-2 text-4xl font-black leading-tight">{getCandidateName(currentCandidate)}</h3>
+                <p className="mt-2 text-lg font-semibold text-blue-100">
                   Registration ID: {getCandidateId(currentCandidate)}
                 </p>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 <CandidateDetail label="Category" value={getOriginalCategory(currentCandidate)} />
                 <CandidateDetail label="Effective Category" value={getEffectiveCategory(currentCandidate)} />
                 <CandidateDetail label="Percentage12" value={formatPercent(getPercentage12(currentCandidate))} />
@@ -443,138 +553,92 @@ export function LiveCounselingPanel() {
           )}
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-2xl font-black text-slate-950">Allotment Form</h2>
-          <div className="mt-5 space-y-5">
-            <label className="block">
-              <span className="mb-2 block text-base font-black text-slate-700">Select College</span>
-              <select
-                value={selectedCollegeId}
-                onChange={(event) => setSelectedCollegeId(event.target.value)}
-                disabled={!currentCandidate || actionInProgress}
-                className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg font-bold text-slate-950 outline-none focus:border-govt-700 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
-              >
-                <option value="">Choose college</option>
-                {collegesWithAvailableSeats.map((college) => (
-                  <option key={college.id} value={college.id}>
-                    {college.collegeName}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div className="grid gap-5 2xl:grid-cols-[minmax(0,0.92fr)_minmax(420px,1.08fr)]">
+            <div className="space-y-5">
+              <label className="block">
+                <span className="mb-2 block text-base font-black text-slate-700">Select College</span>
+                <select
+                  value={selectedCollegeId}
+                  onChange={(event) => setSelectedCollegeId(event.target.value)}
+                  disabled={!currentCandidate || actionInProgress}
+                  className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg font-bold text-slate-950 outline-none focus:border-govt-700 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                >
+                  <option value="">Choose college</option>
+                  {collegesWithAvailableSeats.map((college) => (
+                    <option key={college.id} value={college.id}>
+                      {college.collegeName}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label className="block">
-              <span className="mb-2 block text-base font-black text-slate-700">Select Eligible Category</span>
-              <select
-                value={selectedCategory}
-                onChange={(event) => setSelectedCategory(event.target.value as CategoryColumn)}
-                disabled={!currentCandidate || !selectedCollege || actionInProgress}
-                className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg font-bold text-slate-950 outline-none focus:border-govt-700 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
-              >
-                <option value="">Choose category</option>
-                {eligibleCategories.map((category) => (
-                  <option key={category} value={category}>
-                    {category} - Remaining {selectedCollege ? getSeatRemaining(selectedCollege, category) : 0}
-                  </option>
-                ))}
-              </select>
-            </label>
+              <label className="block">
+                <span className="mb-2 block text-base font-black text-slate-700">Select Eligible Category</span>
+                <select
+                  value={selectedCategory}
+                  onChange={(event) => setSelectedCategory(event.target.value as CategoryColumn)}
+                  disabled={!currentCandidate || !selectedCollege || actionInProgress}
+                  className="h-14 w-full rounded-lg border border-slate-300 bg-white px-4 text-lg font-bold text-slate-950 outline-none focus:border-govt-700 focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                >
+                  <option value="">Choose category</option>
+                  {eligibleCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category} - Remaining {selectedCollege ? getSeatRemaining(selectedCollege, category) : 0}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            {selectedCollege && currentCandidate && eligibleCategories.length === 0 ? (
-              <StatusMessage tone="error" message="No eligible seats are available for this candidate in the selected college." />
-            ) : null}
+              {selectedCollege && currentCandidate && eligibleCategories.length === 0 ? (
+                <StatusMessage tone="error" message="No eligible seats are available for this candidate in the selected college." />
+              ) : null}
 
-            <button
-              type="button"
-              onClick={allotSeat}
-              disabled={!currentCandidate || !selectedCollege || !selectedCategory || actionInProgress}
-              className="min-h-16 w-full rounded-xl bg-emerald-600 px-6 text-2xl font-black text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-            >
-              {actionState === "allotting" ? "Allotting..." : "Allot Seat"}
-            </button>
-
-            <div className="grid gap-3 sm:grid-cols-3">
               <button
                 type="button"
-                onClick={() => currentCandidate && updateCandidateStatus(currentCandidate, "absent")}
-                disabled={!currentCandidate || actionInProgress}
-                className="min-h-14 rounded-lg bg-red-600 px-4 text-lg font-black text-white transition hover:bg-red-700 disabled:bg-slate-300"
+                onClick={allotSeat}
+                disabled={!currentCandidate || !selectedCollege || !selectedCategory || actionInProgress}
+                className="min-h-16 w-full rounded-xl bg-emerald-600 px-6 text-2xl font-black text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
-                Mark Absent
+                {actionState === "allotting" ? "Allotting..." : "Allot Seat"}
               </button>
-              <button
-                type="button"
-                onClick={() => currentCandidate && updateCandidateStatus(currentCandidate, "waiting")}
-                disabled={!currentCandidate || actionInProgress}
-                className="min-h-14 rounded-lg bg-amber-500 px-4 text-lg font-black text-white transition hover:bg-amber-600 disabled:bg-slate-300"
-              >
-                Mark Waiting
-              </button>
-              <button
-                type="button"
-                onClick={() => currentCandidate && updateCandidateStatus(currentCandidate, "skipped")}
-                disabled={!currentCandidate || actionInProgress}
-                className="min-h-14 rounded-lg border border-slate-300 bg-white px-4 text-lg font-black text-slate-800 transition hover:bg-slate-50 disabled:text-slate-400"
-              >
-                Skip
-              </button>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={() => currentCandidate && updateCandidateStatus(currentCandidate, "absent")}
+                  disabled={!currentCandidate || actionInProgress}
+                  className="min-h-14 rounded-lg bg-red-600 px-4 text-lg font-black text-white transition hover:bg-red-700 disabled:bg-slate-300"
+                >
+                  Mark Absent
+                </button>
+                <button
+                  type="button"
+                  onClick={() => currentCandidate && updateCandidateStatus(currentCandidate, "waiting")}
+                  disabled={!currentCandidate || actionInProgress}
+                  className="min-h-14 rounded-lg bg-amber-500 px-4 text-lg font-black text-white transition hover:bg-amber-600 disabled:bg-slate-300"
+                >
+                  Mark Waiting
+                </button>
+                <button
+                  type="button"
+                  onClick={() => currentCandidate && updateCandidateStatus(currentCandidate, "skipped")}
+                  disabled={!currentCandidate || actionInProgress}
+                  className="min-h-14 rounded-lg border border-slate-300 bg-white px-4 text-lg font-black text-slate-800 transition hover:bg-slate-50 disabled:text-slate-400"
+                >
+                  Skip
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      </section>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="mb-4 flex flex-col gap-2 xl:flex-row xl:items-end xl:justify-between">
-          <div>
-            <h2 className="text-2xl font-black text-slate-950">Real-Time Seat Availability</h2>
-            <p className="text-base font-semibold text-slate-600">
-              Green = available, Yellow = low seats, Red = full.
-            </p>
+            <CandidateSpecificVacancyPanel
+              currentCandidate={currentCandidate}
+              displaySeatCategories={displaySeatCategories}
+              relevantRemainingSeats={candidateRelevantRemainingSeats}
+              seatMatrix={seatMatrix}
+            />
           </div>
-          <div className="text-base font-black text-slate-700">Colleges: {seatMatrix.length}</div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="min-w-[1500px] divide-y divide-slate-200">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="sticky left-0 z-10 bg-slate-50 px-4 py-3 text-left text-sm font-black uppercase tracking-wide text-slate-600">
-                  College
-                </th>
-                {categoryColumns.map((category) => (
-                  <th key={category} className="px-3 py-3 text-center text-sm font-black uppercase tracking-wide text-slate-600">
-                    {category}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {seatMatrix.map((college) => (
-                <tr key={college.id}>
-                  <td className="sticky left-0 max-w-96 bg-white px-4 py-4 text-base font-black text-slate-950">
-                    {college.collegeName}
-                  </td>
-                  {categoryColumns.map((category) => {
-                    const remaining = getSeatRemaining(college, category);
-                    const filled = getSeatFilled(college, category);
-                    return (
-                      <td key={category} className="px-3 py-4 text-center">
-                        <div
-                          className={[
-                            "mx-auto min-w-20 rounded-lg border px-3 py-2",
-                            getSeatTone(remaining),
-                          ].join(" ")}
-                        >
-                          <p className="text-2xl font-black">{remaining}</p>
-                          <p className="text-xs font-bold">Filled {filled}</p>
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </section>
 

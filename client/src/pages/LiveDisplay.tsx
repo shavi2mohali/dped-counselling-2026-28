@@ -7,6 +7,8 @@ import {
   getCandidateId,
   getCandidateName,
   getCandidateRank,
+  getEffectiveCategory,
+  getEligibleCategories,
   getOriginalCategory,
   getPercentage12,
   getSeatRemaining,
@@ -18,7 +20,6 @@ import { getFirebaseFirestore } from "../lib/firebase";
 
 function seatColor(remaining: number) {
   if (remaining <= 0) return "border-red-400 bg-red-100 text-red-900";
-  if (remaining <= 2) return "border-amber-400 bg-amber-100 text-amber-900";
   return "border-emerald-400 bg-emerald-100 text-emerald-900";
 }
 
@@ -99,6 +100,25 @@ export function LiveDisplay() {
     [seatMatrix],
   );
 
+  const displaySeatCategories = useMemo(
+    () => (currentCandidate ? getEligibleCategories(currentCandidate) : []),
+    [currentCandidate],
+  );
+
+  const candidateRelevantRemaining = useMemo(
+    () =>
+      seatMatrix.reduce(
+        (sum, college) =>
+          sum +
+          displaySeatCategories.reduce(
+            (categorySum, category) => categorySum + getSeatRemaining(college, category),
+            0,
+          ),
+        0,
+      ),
+    [displaySeatCategories, seatMatrix],
+  );
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
       <header className="border-b border-white/10 bg-govt-900 px-10 py-6">
@@ -109,7 +129,7 @@ export function LiveDisplay() {
           </div>
           <div className="text-right">
             <p className="text-lg font-black text-blue-100">Remaining Seats</p>
-            <p className="text-5xl font-black text-white">{totalRemaining}</p>
+            <p className="text-5xl font-black text-white">{currentCandidate ? candidateRelevantRemaining : totalRemaining}</p>
           </div>
         </div>
       </header>
@@ -165,9 +185,15 @@ export function LiveDisplay() {
         <section className="rounded-2xl border border-white/10 bg-white p-6 text-slate-950 shadow-2xl">
           <div className="mb-5 flex items-end justify-between gap-6">
             <div>
-              <h2 className="text-4xl font-black">Seat Availability</h2>
+              <h2 className="text-4xl font-black">
+                {currentCandidate
+                  ? `Available Seats for ${getCandidateName(currentCandidate)} (${getEffectiveCategory(currentCandidate)})`
+                  : "Candidate-Specific Seat Availability"}
+              </h2>
               <p className="mt-1 text-xl font-bold text-slate-600">
-                Green = available, Yellow = low seats, Red = full
+                {currentCandidate
+                  ? `Showing only: ${displaySeatCategories.join(", ")}`
+                  : "Call a candidate to show only their eligible seat categories."}
               </p>
             </div>
             <p className="text-lg font-black text-slate-500">
@@ -175,42 +201,53 @@ export function LiveDisplay() {
             </p>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="min-w-[1600px] divide-y divide-slate-200">
-              <thead className="bg-slate-100">
-                <tr>
-                  <th className="sticky left-0 z-10 bg-slate-100 px-4 py-4 text-left text-base font-black uppercase text-slate-700">
-                    College
-                  </th>
-                  {categoryColumns.map((category) => (
-                    <th key={category} className="px-3 py-4 text-center text-sm font-black uppercase text-slate-700">
-                      {category}
+          {currentCandidate ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-[900px] divide-y divide-slate-200">
+                <thead className="bg-slate-100">
+                  <tr>
+                    <th className="sticky left-0 z-10 bg-slate-100 px-4 py-4 text-left text-base font-black uppercase text-slate-700">
+                      College
                     </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {seatMatrix.map((college) => (
-                  <tr key={college.id}>
-                    <td className="sticky left-0 max-w-[360px] bg-white px-4 py-4 text-xl font-black">
-                      {college.collegeName}
-                    </td>
-                    {categoryColumns.map((category) => {
-                      const remaining = getSeatRemaining(college, category);
-
-                      return (
-                        <td key={category} className="px-3 py-4 text-center">
-                          <div className={`mx-auto rounded-xl border px-3 py-2 ${seatColor(remaining)}`}>
-                            <p className="text-4xl font-black">{remaining}</p>
-                          </div>
-                        </td>
-                      );
-                    })}
+                    {displaySeatCategories.map((category) => (
+                      <th key={category} className="px-5 py-4 text-center text-base font-black uppercase text-slate-700">
+                        {category}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {seatMatrix.map((college) => (
+                    <tr key={college.id}>
+                      <td className="sticky left-0 max-w-[420px] bg-white px-4 py-4 text-xl font-black">
+                        {college.collegeName}
+                      </td>
+                      {displaySeatCategories.map((category) => {
+                        const remaining = getSeatRemaining(college, category);
+
+                        return (
+                          <td key={category} className="px-5 py-4 text-center">
+                            <div className={`mx-auto min-w-28 rounded-xl border px-4 py-3 ${seatColor(remaining)}`}>
+                              <p className="text-6xl font-black">{remaining}</p>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex min-h-60 items-center justify-center rounded-2xl border-4 border-dashed border-slate-300 bg-slate-50 text-center">
+              <div>
+                <p className="text-5xl font-black text-slate-800">Waiting for Candidate</p>
+                <p className="mt-4 text-2xl font-bold text-slate-500">
+                  Eligible seat availability will appear here after the next candidate is called.
+                </p>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>

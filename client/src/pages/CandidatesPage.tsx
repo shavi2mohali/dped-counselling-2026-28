@@ -41,7 +41,11 @@ function SummaryCard({ label, value, tone = "default" }: { label: string; value:
 
 function StatusBadge({ status }: { status: string }) {
   const className =
-    status === "allotted"
+    status === "joined"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+      : status === "notJoined"
+        ? "bg-red-50 text-red-700 ring-red-200"
+        : status === "allotted"
       ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
       : status === "absent"
         ? "bg-red-50 text-red-700 ring-red-200"
@@ -51,7 +55,9 @@ function StatusBadge({ status }: { status: string }) {
             ? "bg-blue-50 text-blue-700 ring-blue-200"
             : "bg-slate-50 text-slate-700 ring-slate-200";
 
-  return <span className={`rounded-full px-2 py-1 text-xs font-black capitalize ring-1 ${className}`}>{status}</span>;
+  const label = status === "notJoined" ? "Not Joined" : status.charAt(0).toUpperCase() + status.slice(1);
+
+  return <span className={`rounded-full px-2 py-1 text-xs font-black ring-1 ${className}`}>{label}</span>;
 }
 
 function toCsvValue(value: unknown) {
@@ -97,11 +103,13 @@ export function CandidatesPage() {
   const stats = useMemo(() => {
     const total = candidates.length;
     const allotted = candidates.filter((candidate) => candidate.status === "allotted").length;
+    const joined = candidates.filter((candidate) => candidate.status === "joined").length;
+    const notJoined = candidates.filter((candidate) => candidate.status === "notJoined").length;
     const absent = candidates.filter((candidate) => candidate.status === "absent").length;
     const pending = candidates.filter((candidate) => (candidate.status ?? "pending") === "pending").length;
     const punjab = candidates.filter((candidate) => candidate.isPunjabDomicile).length;
 
-    return { absent, allotted, pending, punjab, total };
+    return { absent, allotted, joined, notJoined, pending, punjab, total };
   }, [candidates]);
 
   const categories = useMemo(
@@ -261,13 +269,14 @@ export function CandidatesPage() {
         </button>
       </div>
 
-      <RecalculateRanksButton compact />
+      <RecalculateRanksButton />
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <SummaryCard label="Total Candidates" value={stats.total} />
         <SummaryCard label="Pending" value={stats.pending} tone="amber" />
         <SummaryCard label="Allotted" value={stats.allotted} tone="green" />
-        <SummaryCard label="Absent" value={stats.absent} tone="red" />
+        <SummaryCard label="Joined" value={stats.joined} tone="green" />
+        <SummaryCard label="Not Joined" value={stats.notJoined} tone="red" />
         <SummaryCard label="Punjab Domicile" value={stats.punjab} />
       </div>
 
@@ -343,6 +352,8 @@ export function CandidatesPage() {
             <option value="all">All status</option>
             <option value="pending">Pending</option>
             <option value="allotted">Allotted</option>
+            <option value="joined">Joined</option>
+            <option value="notJoined">Not Joined</option>
             <option value="absent">Absent</option>
             <option value="waiting">Waiting</option>
             <option value="called">Called</option>

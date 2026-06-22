@@ -26,6 +26,8 @@ export type CandidateStatus =
   | "absent"
   | "skipped"
   | "allotted"
+  | "joined"
+  | "notJoined"
   | "reported"
   | "cancelled";
 
@@ -54,6 +56,19 @@ export interface Candidate {
   updatedAt?: Timestamp;
   allottedCollegeId?: string;
   allottedCategory?: CategoryColumn;
+  joinedStatus?: "joined" | "notJoined";
+  joinedUpdatedByUid?: string;
+  joinedUpdatedByEmail?: string;
+}
+
+export interface CollegeProfile {
+  id: string;
+  collegeName: string;
+  email: string;
+  passwordHash?: string;
+  isActive?: boolean;
+  createdAt?: Timestamp;
+  updatedAt?: Timestamp;
 }
 
 export interface SeatMatrixEntry {

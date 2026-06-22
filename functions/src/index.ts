@@ -54,6 +54,7 @@ interface StoredCandidate {
   percentage12?: number;
   Percentage12?: number;
   dob?: string;
+  DOB?: string;
   dateOfBirth?: string;
 }
 
@@ -136,6 +137,43 @@ const parseDob = (value: unknown): string => {
   }
 
   return cleanString(value);
+};
+
+const getDobTime = (value: unknown): number => {
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    return value.getTime();
+  }
+
+  if (typeof value === "number") {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed) {
+      return Date.UTC(parsed.y, parsed.m - 1, parsed.d);
+    }
+  }
+
+  const dob = cleanString(value);
+  if (!dob) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  const normalized = dob.replace(/\./g, "/").replace(/-/g, "/");
+  const parts = normalized.split("/").map((part) => Number(part));
+
+  if (parts.length === 3 && parts.every((part) => Number.isFinite(part))) {
+    const [first, second, third] = parts;
+    const year = third < 100 ? 2000 + third : third;
+
+    if (first > 31) {
+      return Date.UTC(first, second - 1, third);
+    }
+
+    if (year > 1900) {
+      return Date.UTC(year, second - 1, first);
+    }
+  }
+
+  const parsed = new Date(dob).getTime();
+  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
 };
 
 const isPunjabDomicileDistrict = (district: string): boolean => {
@@ -276,6 +314,11 @@ const assignRanks = (candidates: CleanCandidate[]): CleanCandidate[] =>
         return percentage12Difference;
       }
 
+      const dobDifference = getDobTime(left.dob) - getDobTime(right.dob);
+      if (dobDifference !== 0) {
+        return dobDifference;
+      }
+
       return right.percentage10 - left.percentage10;
     })
     .map((candidate, index) => ({
@@ -290,13 +333,7 @@ const getStoredCandidatePercentage12 = (candidate: StoredCandidate): number =>
   cleanNumber(candidate.percentage12 ?? candidate.Percentage12);
 
 const getStoredCandidateDobTime = (candidate: StoredCandidate): number => {
-  const dob = cleanString(candidate.dob ?? candidate.dateOfBirth);
-  if (!dob) {
-    return Number.MAX_SAFE_INTEGER;
-  }
-
-  const parsed = new Date(dob).getTime();
-  return Number.isFinite(parsed) ? parsed : Number.MAX_SAFE_INTEGER;
+  return getDobTime(candidate.dob ?? candidate.DOB ?? candidate.dateOfBirth);
 };
 
 const getStoredCandidateRegistrationId = (candidate: StoredCandidate): string =>
@@ -542,6 +579,7 @@ export const assignMeritRanks = onRequest(
     }
 
     try {
+      const startedAt = Date.now();
       const decodedToken = await requireSignedInUser(req);
       logger.info("Starting merit rank recalculation", {
         uid: decodedToken.uid,
@@ -595,6 +633,7 @@ export const assignMeritRanks = onRequest(
               totalCandidates: rankedCandidates.length,
               calculatedByUid: decodedToken.uid,
               calculatedByEmail: decodedToken.email ?? "",
+              sortOrder: "Percentage12 DESC, DOB older first, Percentage10 DESC",
               calculatedAt: FieldValue.serverTimestamp(),
             },
             updatedAt: FieldValue.serverTimestamp(),
@@ -605,19 +644,21 @@ export const assignMeritRanks = onRequest(
 
       await commitInChunks(writes);
 
+      const timeTakenMs = Date.now() - startedAt;
       const summary = {
         success: true,
         totalCandidates: rankedCandidates.length,
         totalUpdated: rankedCandidates.length,
+        timeTakenMs,
         top5Candidates: rankedCandidates.slice(0, 5).map((candidate) => ({
           registrationId: getStoredCandidateRegistrationId(candidate.data) || candidate.id,
           name: getStoredCandidateName(candidate.data),
           rank: candidate.rank,
           percentage12: getStoredCandidatePercentage12(candidate.data),
           percentage10: getStoredCandidatePercentage10(candidate.data),
-          dob: cleanString(candidate.data.dob ?? candidate.data.dateOfBirth),
+          dob: cleanString(candidate.data.dob ?? candidate.data.DOB ?? candidate.data.dateOfBirth),
         })),
-        message: "Merit ranks recalculated successfully",
+        message: `Merit ranks recalculated successfully in ${timeTakenMs} ms`,
       };
 
       logger.info("Merit rank recalculation completed", summary);

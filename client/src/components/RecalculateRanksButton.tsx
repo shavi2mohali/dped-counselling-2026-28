@@ -7,6 +7,14 @@ export function RecalculateRanksButton({ compact = false }: { compact?: boolean 
   const [error, setError] = useState("");
 
   const handleClick = async () => {
+    const confirmed = window.confirm(
+      "Re-calculate merit ranks for all candidates?\n\nSorting will be: Percentage12 highest first, DOB older first, then Percentage10 highest first.",
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
     setLoading(true);
     setError("");
     setSummary(null);
@@ -28,7 +36,7 @@ export function RecalculateRanksButton({ compact = false }: { compact?: boolean 
           {!compact ? <p className="text-sm font-black uppercase tracking-wide text-govt-700">Merit Rank Utility</p> : null}
           {!compact ? (
             <p className="mt-1 text-sm font-semibold text-govt-900">
-              Sorts all candidates by Percentage12, older DOB, then Percentage10.
+              Sorts all candidates by Percentage12, older DOB, then Percentage10 and updates Firestore ranks.
             </p>
           ) : null}
         </div>
@@ -36,18 +44,25 @@ export function RecalculateRanksButton({ compact = false }: { compact?: boolean 
           type="button"
           onClick={handleClick}
           disabled={loading}
-          className="min-h-11 rounded-lg bg-govt-700 px-5 text-sm font-black text-white transition hover:bg-govt-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className={compact
+            ? "min-h-11 rounded-lg bg-govt-700 px-5 text-sm font-black text-white transition hover:bg-govt-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            : "min-h-14 rounded-xl bg-govt-700 px-7 text-base font-black text-white shadow-sm transition hover:bg-govt-800 disabled:cursor-not-allowed disabled:bg-slate-300"}
         >
-          {loading ? "Re-calculating..." : "Re-calculate All Ranks"}
+          {loading ? "Re-calculating..." : "Re-calculate All Merit Ranks"}
         </button>
       </div>
 
       {summary ? (
-        <p className="text-sm font-bold text-emerald-800">
-          Updated {summary.totalUpdated} candidates. Top rank: {summary.top5Candidates[0]?.name ?? "-"}
-        </p>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800">
+          Ranked {summary.totalCandidates} candidates and updated {summary.totalUpdated} documents in{" "}
+          {(summary.timeTakenMs / 1000).toFixed(2)} seconds. Rank 1: {summary.top5Candidates[0]?.name ?? "-"}.
+        </div>
       ) : null}
-      {error ? <p className="text-sm font-bold text-red-700">{error}</p> : null}
+      {error ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+          {error}
+        </div>
+      ) : null}
     </div>
   );
 }

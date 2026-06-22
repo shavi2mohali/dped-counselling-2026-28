@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import App from "./App";
+import { CollegeProtectedRoute } from "./components/CollegeProtectedRoute";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { AuthProvider } from "./hooks/useAuth";
 import {
@@ -10,6 +11,8 @@ import {
   AdminPlaceholder,
 } from "./pages/AdminDashboard";
 import { CandidatesPage } from "./pages/CandidatesPage";
+import { CollegeDashboard } from "./pages/CollegeDashboard";
+import { CollegeLoginPage } from "./pages/CollegeLoginPage";
 import { HomePage } from "./pages/HomePage";
 import { LiveDisplay } from "./pages/LiveDisplay";
 import { LiveCounselingPanel } from "./pages/LiveCounselingPanel";
@@ -29,6 +32,18 @@ const router = createBrowserRouter([
       {
         path: "login",
         element: <LoginPage />,
+      },
+      {
+        path: "college/login",
+        element: <CollegeLoginPage />,
+      },
+      {
+        path: "college/dashboard",
+        element: (
+          <CollegeProtectedRoute>
+            <CollegeDashboard />
+          </CollegeProtectedRoute>
+        ),
       },
       {
         path: "admin",
