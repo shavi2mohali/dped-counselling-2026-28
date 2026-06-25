@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useState } from "react";
+import { ImportSeatMatrixButton } from "../components/ImportSeatMatrixButton";
 import { RecalculateRanksButton } from "../components/RecalculateRanksButton";
 import { useAuth } from "../hooks/useAuth";
 
@@ -47,6 +48,7 @@ export function AdminHome() {
       </div>
 
       <RecalculateRanksButton />
+      <ImportSeatMatrixButton />
     </div>
   );
 }

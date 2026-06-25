@@ -6,19 +6,69 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    // Development rule: signed-in admins can upload/read Excel imports.
-    // Tighten this with custom admin claims before production.
-    match /candidate-imports/{fileName} {
-      allow read, write: if signedIn()
+    function authEmail() {
+      return signedIn()
+        && request.auth.token.keys().hasAll(["email"])
+        && request.auth.token.email is string
+        ? request.auth.token.email.lower()
+        : "";
+    }
+
+    function hasAdminClaim() {
+      return signedIn()
         && (
-          request.method == 'get'
-          || request.method == 'list'
-          || request.resource.size < 25 * 1024 * 1024
+          (request.auth.token.keys().hasAll(["admin"])
+            && request.auth.token.admin == true)
+          || (request.auth.token.keys().hasAll(["role"])
+            && request.auth.token.role == "admin")
         );
     }
 
+    function hasAdminEmail() {
+      return signedIn()
+        && (
+          authEmail().matches(".*@dpedpunjab[.]in$")
+          || authEmail() in [
+            "admin@dpedpunjab.in",
+            "counselling@dpedpunjab.in"
+          ]
+        );
+    }
+
+    function isAdmin() {
+      return hasAdminClaim() || hasAdminEmail();
+    }
+
+    function isValidExcelUpload() {
+      return request.resource != null
+        && request.resource.size < 25 * 1024 * 1024
+        && request.resource.contentType is string
+        && request.resource.contentType.matches(
+          "(application/vnd[.]openxmlformats-officedocument[.]spreadsheetml[.]sheet|application/vnd[.]ms-excel|application/octet-stream)"
+        );
+    }
+
+    match /candidate-imports/{fileName} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() && isValidExcelUpload();
+      allow delete: if isAdmin();
+    }
+
+    match /seat-matrix-imports/{fileName} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() && isValidExcelUpload();
+      allow delete: if isAdmin();
+    }
+
+    // Store only intentionally public Live Display assets in this folder.
+    match /public-live/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Admins have full access to every remaining Storage object.
     match /{allPaths=**} {
-      allow read, write: if false;
+      allow read, write: if isAdmin();
     }
   }
 }

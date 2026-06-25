@@ -6,28 +6,73 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isCollegeUser() {
-      return signedIn() && exists(/databases/$(database)/documents/colleges/$(request.auth.uid));
+    function isPublicDisplayRequest() {
+      return request.auth == null;
     }
 
-    function collegeProfile() {
-      return get(/databases/$(database)/documents/colleges/$(request.auth.uid)).data;
+    function authEmail() {
+      return signedIn()
+        && request.auth.token.keys().hasAll(["email"])
+        && request.auth.token.email is string
+        ? request.auth.token.email.lower()
+        : "";
     }
 
-    // Development fallback keeps existing admin accounts working if they do not have a college profile.
-    // For production, remove "|| !isCollegeUser()" after adding admin custom claims or admins/{uid} docs.
-    function isAdminUser() {
+    function hasAdminClaim() {
       return signedIn()
         && (
-          request.auth.token.admin == true
-          || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-          || !isCollegeUser()
+          (request.auth.token.keys().hasAll(["admin"])
+            && request.auth.token.admin == true)
+          || (request.auth.token.keys().hasAll(["role"])
+            && request.auth.token.role == "admin")
         );
     }
 
-    function isAllottedToSignedInCollege() {
-      return isCollegeUser()
-        && resource.data.allottedCollegeId == collegeProfile().collegeName;
+    function hasAdminEmail() {
+      return signedIn()
+        && (
+          authEmail().matches(".*@dpedpunjab[.]in$")
+          || authEmail() in [
+            "admin@dpedpunjab.in",
+            "counselling@dpedpunjab.in"
+          ]
+        );
+    }
+
+    function isAdmin() {
+      return hasAdminClaim() || hasAdminEmail();
+    }
+
+    function hasCollegeProfile() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/colleges/$(request.auth.uid));
+    }
+
+    function hasCollegeClaim() {
+      return signedIn()
+        && (
+          (request.auth.token.keys().hasAll(["college"])
+            && request.auth.token.college == true)
+          || (request.auth.token.keys().hasAll(["role"])
+            && request.auth.token.role == "college")
+        );
+    }
+
+    function isCollege() {
+      return !isAdmin() && (hasCollegeClaim() || hasCollegeProfile());
+    }
+
+    function collegeName() {
+      return request.auth.token.keys().hasAll(["collegeName"])
+        && request.auth.token.collegeName is string
+        ? request.auth.token.collegeName
+        : get(/databases/$(database)/documents/colleges/$(request.auth.uid)).data.collegeName;
+    }
+
+    function candidateBelongsToCollege() {
+      return isCollege()
+        && resource.data.allottedCollegeId is string
+        && resource.data.allottedCollegeId == collegeName();
     }
 
     function collegeJoiningUpdateOnly() {
@@ -42,44 +87,51 @@ service cloud.firestore {
       && request.resource.data.status in ["joined", "notJoined"]
       && request.resource.data.joinedStatus in ["joined", "notJoined"]
       && request.resource.data.joinedUpdatedByUid == request.auth.uid
-      && request.resource.data.allottedCollegeId == resource.data.allottedCollegeId;
+      && request.resource.data.joinedUpdatedByEmail == authEmail();
     }
 
     match /candidates/{registrationId} {
-      // Public read is kept for the existing no-login Live Display screen.
-      // College writes are still restricted to their own allotted candidates.
-      allow read: if true;
-      allow create, delete: if isAdminUser();
-      allow update: if isAdminUser()
-        || (isAllottedToSignedInCollege() && collegeJoiningUpdateOnly());
+      // Public display is anonymous; college queries must filter by allottedCollegeId.
+      allow read: if isPublicDisplayRequest()
+        || isAdmin()
+        || candidateBelongsToCollege();
+
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (candidateBelongsToCollege() && collegeJoiningUpdateOnly());
     }
 
     match /seatMatrix/{collegeName} {
-      allow read: if true;
-      allow write: if isAdminUser();
-    }
-
-    match /allotments/{allotmentId} {
-      allow read, write: if isAdminUser();
-    }
-
-    match /settings/{settingId} {
-      allow read: if true;
-      allow write: if isAdminUser();
+      allow read: if isPublicDisplayRequest() || isAdmin() || isCollege();
+      allow create, update, delete: if isAdmin();
     }
 
     match /colleges/{collegeUid} {
-      allow read: if isAdminUser() || (signedIn() && request.auth.uid == collegeUid);
-      allow create, update, delete: if isAdminUser();
+      allow read: if isAdmin()
+        || (isCollege() && request.auth.uid == collegeUid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /allotments/{allotmentId} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /settings/liveCounseling {
+      // Public display needs the ID of the currently called candidate.
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow read, create, update, delete: if isAdmin();
     }
 
     match /admins/{adminUid} {
-      allow read: if signedIn() && request.auth.uid == adminUid;
-      allow write: if isAdminUser();
+      allow read, create, update, delete: if isAdmin();
     }
 
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if isAdmin();
     }
   }
 }

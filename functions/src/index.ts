@@ -5,6 +5,7 @@ import { getStorage } from "firebase-admin/storage";
 import * as logger from "firebase-functions/logger";
 import { onRequest } from "firebase-functions/v2/https";
 import * as XLSX from "xlsx";
+import { CATEGORY_COLUMNS, type CategoryColumn, type SeatCounts } from "./models.js";
 import { emptySeatCounts, SEAT_MATRIX, TOTAL_SEATS } from "./seatMatrix.js";
 
 initializeApp();
@@ -20,6 +21,13 @@ interface ImportCandidatesRequest {
   bucketName?: string;
   sheetName?: string;
   dryRun?: boolean;
+}
+
+interface ImportSeatMatrixRequest {
+  fileUrl?: string;
+  storagePath?: string;
+  bucketName?: string;
+  sheetName?: string;
 }
 
 interface CleanCandidate {
@@ -124,6 +132,17 @@ const getCell = (row: ExcelRow, lookup: Map<string, string>, columnName: string)
   return actualKey ? row[actualKey] : "";
 };
 
+const getFirstCell = (row: ExcelRow, lookup: Map<string, string>, columnNames: string[]): unknown => {
+  for (const columnName of columnNames) {
+    const value = getCell(row, lookup, columnName);
+    if (cleanString(value) !== "") {
+      return value;
+    }
+  }
+
+  return "";
+};
+
 const parseDob = (value: unknown): string => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
     return value.toISOString().slice(0, 10);
@@ -179,6 +198,68 @@ const getDobTime = (value: unknown): number => {
 const isPunjabDomicileDistrict = (district: string): boolean => {
   const cleanedDistrict = district.trim().toUpperCase();
   return cleanedDistrict !== "" && cleanedDistrict !== "OTHER";
+};
+
+const seatMatrixColumnAliases: Record<CategoryColumn, string[]> = {
+  General: ["General"],
+  EWS: ["EWS"],
+  BC: ["BC"],
+  "SC (RO)": ["SC (RO)", "SC(RO)", "SC RO"],
+  "SC(MB)": ["SC(MB)", "SC (MB)", "SC MB"],
+  "Ex serviceman (Gen)": ["Ex serviceman (Gen)", "Ex(Gen)", "Ex Gen", "Ex serviceman Gen"],
+  "Ex serviceman (BC)": ["Ex serviceman (BC)", "Ex(BC)", "Ex BC", "Ex serviceman BC"],
+  "Ex serviceman (SC)": ["Ex serviceman (SC)", "Ex(SC)", "Ex SC", "Ex serviceman SC"],
+  "General (FF)": ["General (FF)", "Gen(FF)", "Gen (FF)", "Freedom Fighter"],
+  "Gen (Sports)": ["Gen (Sports)", "General(Sports)", "General (Sports)", "Gen Sports"],
+  "SC (Sports)": ["SC (Sports)", "SC(Sports)", "SC Sports"],
+  "Phy Handicapped": ["Phy Handicapped", "Phy.Handi", "Phy Handi", "Physically Handicapped", "PH"],
+};
+
+const getSeatMatrixCollegeName = (row: ExcelRow, lookup: Map<string, string>): string =>
+  cleanString(getFirstCell(row, lookup, ["Name of College", "College", "College Name", "Name"]));
+
+const getSeatMatrixTotal = (row: ExcelRow, lookup: Map<string, string>): number =>
+  cleanNumber(getFirstCell(row, lookup, ["Total", "Total Seats"]));
+
+const mapSeatMatrixRow = (row: ExcelRow, rowNumber: number) => {
+  const lookup = buildColumnLookup(row);
+  const collegeName = getSeatMatrixCollegeName(row, lookup);
+
+  if (!collegeName) {
+    return { error: { rowNumber, message: "Missing Name of College." } };
+  }
+
+  const seats = emptySeatCounts();
+  CATEGORY_COLUMNS.forEach((category) => {
+    seats[category] = cleanNumber(getFirstCell(row, lookup, seatMatrixColumnAliases[category]));
+  });
+
+  const computedTotal = CATEGORY_COLUMNS.reduce((sum, category) => sum + seats[category], 0);
+  const declaredTotal = getSeatMatrixTotal(row, lookup);
+
+  if (computedTotal <= 0) {
+    return { error: { rowNumber, message: `${collegeName}: category seat total is zero.` } };
+  }
+
+  if (declaredTotal > 0 && declaredTotal !== computedTotal) {
+    return {
+      error: {
+        rowNumber,
+        message: `${collegeName}: Total column (${declaredTotal}) does not match category sum (${computedTotal}).`,
+      },
+    };
+  }
+
+  return {
+    entry: {
+      collegeName,
+      seats,
+      total: computedTotal,
+      isActive: true as const,
+      sourceSession: "2025-27" as const,
+      counsellingSession: "2026-28" as const,
+    },
+  };
 };
 
 const requireSignedInUser = async (req: { headers: { authorization?: string } }) => {
@@ -553,6 +634,188 @@ export const importCandidates = onRequest(
       res.status(500).json({
         success: false,
         error: error instanceof Error ? error.message : "Import failed",
+      });
+    }
+  },
+);
+
+export const importSeatMatrix = onRequest(
+  {
+    cors: robustCorsOptions as unknown as true,
+    region: "asia-south2",
+    timeoutSeconds: 300,
+    memory: "1GiB",
+  },
+  async (req, res) => {
+    setCorsHeaders(res);
+
+    if (req.method === "OPTIONS") {
+      res.status(204).send("");
+      return;
+    }
+
+    if (req.method !== "POST") {
+      res.status(405).json({ success: false, error: "Method not allowed. Use POST." });
+      return;
+    }
+
+    try {
+      const decodedToken = await requireSignedInUser(req);
+      const startedAt = Date.now();
+      const requestBody = (req.body?.data ?? req.body ?? {}) as ImportSeatMatrixRequest;
+      const { fileUrl, storagePath, bucketName, sheetName } = requestBody;
+
+      logger.info("Starting seat matrix import", {
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+        hasFileUrl: Boolean(fileUrl),
+        storagePath,
+        bucketName,
+        sheetName,
+      });
+
+      const downloaded = await downloadExcelFile({ bucketName, fileUrl, storagePath });
+      const workbook = XLSX.read(downloaded.buffer, { type: "buffer", cellDates: true });
+      const selectedSheetName = sheetName ?? workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[selectedSheetName];
+
+      if (!worksheet) {
+        throw new ImportError(400, `Sheet not found: ${selectedSheetName}`);
+      }
+
+      const rows = XLSX.utils.sheet_to_json<ExcelRow>(worksheet, { defval: "", raw: true });
+      if (rows.length === 0) {
+        throw new ImportError(400, "Excel sheet has no seat matrix rows.");
+      }
+
+      const parsingErrors: ParsingError[] = [];
+      const seenCollegeNames = new Set<string>();
+      const entries: Array<{
+        collegeName: string;
+        seats: SeatCounts;
+        total: number;
+        isActive: true;
+        sourceSession: "2025-27";
+        counsellingSession: "2026-28";
+      }> = [];
+
+      rows.forEach((row, index) => {
+        const mapped = mapSeatMatrixRow(row, index + 2);
+
+        if ("error" in mapped && mapped.error) {
+          const lookup = buildColumnLookup(row);
+          const hasAnySeatValue = CATEGORY_COLUMNS.some((category) =>
+            cleanString(getFirstCell(row, lookup, seatMatrixColumnAliases[category])) !== "",
+          );
+          const hasCollege = getSeatMatrixCollegeName(row, lookup) !== "";
+
+          if (hasAnySeatValue || hasCollege) {
+            parsingErrors.push(mapped.error);
+          }
+          return;
+        }
+
+        if (!("entry" in mapped) || !mapped.entry) {
+          return;
+        }
+
+        const normalizedCollegeName = normalizeHeader(mapped.entry.collegeName);
+        if (seenCollegeNames.has(normalizedCollegeName)) {
+          parsingErrors.push({
+            rowNumber: index + 2,
+            message: `${mapped.entry.collegeName}: duplicate college row.`,
+          });
+          return;
+        }
+
+        seenCollegeNames.add(normalizedCollegeName);
+        entries.push(mapped.entry);
+      });
+
+      if (parsingErrors.length > 0) {
+        throw new ImportError(400, "Seat matrix import has validation errors.", parsingErrors);
+      }
+
+      if (entries.length !== 11) {
+        throw new ImportError(400, `Expected 11 colleges, found ${entries.length}.`);
+      }
+
+      const totalSeats = entries.reduce((sum, entry) => sum + entry.total, 0);
+      const existingSnapshot = await db.collection("seatMatrix").get();
+      const deleteWrites: Array<(batch: WriteBatch) => void> = [];
+      existingSnapshot.docs.forEach((seatDoc) => {
+        deleteWrites.push((batch) => batch.delete(seatDoc.ref));
+      });
+
+      await commitInChunks(deleteWrites);
+
+      const writes: Array<(batch: WriteBatch) => void> = [];
+      entries.forEach((entry) => {
+        writes.push((batch) => {
+          batch.set(db.collection("seatMatrix").doc(entry.collegeName), {
+            ...entry,
+            filled: emptySeatCounts(),
+            remaining: entry.seats,
+            importedFrom: downloaded.source,
+            importedAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        });
+      });
+
+      writes.push((batch) => {
+        batch.set(
+          db.collection("settings").doc("global"),
+          {
+            totalSeats,
+            lastSeatMatrixImport: {
+              importedByUid: decodedToken.uid,
+              importedByEmail: decodedToken.email ?? "",
+              importedAt: FieldValue.serverTimestamp(),
+              sheetName: selectedSheetName,
+              source: downloaded.source,
+              totalColleges: entries.length,
+              totalSeats,
+            },
+            updatedAt: FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
+      });
+
+      await commitInChunks(writes);
+
+      const summary = {
+        success: true,
+        sheetName: selectedSheetName,
+        totalRowsRead: rows.length,
+        totalCollegesUpdated: entries.length,
+        totalSeats,
+        colleges: entries.map((entry) => ({
+          collegeName: entry.collegeName,
+          total: entry.total,
+        })),
+        timeTakenMs: Date.now() - startedAt,
+        message: `Updated ${entries.length} colleges successfully`,
+      };
+
+      logger.info("Seat matrix import completed", summary);
+      res.status(200).json({ data: summary });
+    } catch (error) {
+      logger.error("Seat matrix import failed", error);
+
+      if (error instanceof ImportError) {
+        res.status(error.status).json({
+          success: false,
+          error: error.message,
+          details: error.details,
+        });
+        return;
+      }
+
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Seat matrix import failed",
       });
     }
   },
