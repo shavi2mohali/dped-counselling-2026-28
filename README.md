@@ -40,6 +40,19 @@ npm run functions:build
 npm run functions:deploy
 ```
 
+## Admin Login
+
+Use the following credentials for admin access:
+
+Username / Email: `shavi2me@admin.com`
+Password: `shavi2me@6124`
+
+Important:
+
+- Change this password after first deployment.
+- Do not commit real production passwords to a public repository.
+- For production, create the admin user in Firebase Authentication and store role/permission in Firestore if required by the app.
+
 ## Cleanup Notes
 
 The repository is intentionally organized with React code only inside `client/` and Cloud Functions only inside `functions/`.
@@ -66,7 +79,7 @@ Kept at the root:
 
 ## Seat Matrix Source
 
-The seat matrix is hardcoded from the official D.P.Ed Session 2025-27 data and reused for counselling session 2026-28.
+Seat matrix is uploaded/imported from Excel for D.P.Ed 2026-28 and stored in Firestore collection `seatMatrix`.
 
 Total seats: `350`.
 

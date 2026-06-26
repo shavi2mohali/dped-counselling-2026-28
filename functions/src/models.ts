@@ -61,7 +61,10 @@ export interface Candidate {
   preferences?: string[];
   status: CandidateStatus;
   allottedCollegeId?: string;
+  allottedCollegeName?: string;
   allottedCategory?: CategoryColumn;
+  allotmentStatus?: "allotted" | "joined" | "notJoined" | "cancelled";
+  allotmentUpdatedAt?: Timestamp;
   allotmentRound?: number;
   remarks?: string;
   importedAt?: Timestamp;
@@ -84,13 +87,20 @@ export interface SeatMatrixEntry {
 
 export interface AllotmentLog {
   candidateRegistrationId: string;
+  candidateName?: string;
+  collegeId?: string;
   collegeName: string;
   category: CategoryColumn;
+  seatMatrixCategoryKey?: CategoryColumn;
   round: number;
   action: "allotted" | "upgraded" | "cancelled" | "reported" | "manual_adjustment";
+  previousCollegeId?: string;
   previousCollegeName?: string;
   previousCategory?: CategoryColumn;
+  isTransfer?: boolean;
+  isDuplicateAllotment?: boolean;
   performedByUid: string;
+  performedByEmail?: string;
   performedByName?: string;
   reason?: string;
   createdAt: Timestamp;

@@ -10,6 +10,7 @@ const navItems = [
   { to: "/admin/seat-matrix", label: "Seat Matrix" },
   { to: "/admin/counseling-control", label: "Live Counseling" },
   { to: "/admin/reports", label: "Reports" },
+  { to: "/admin/tools", label: "Admin Tools" },
 ];
 
 function DashboardStatCard({ label, value, note }: { label: string; value: string; note: string }) {

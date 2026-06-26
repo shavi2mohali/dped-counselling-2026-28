@@ -34,7 +34,8 @@ service cloud.firestore {
           authEmail().matches(".*@dpedpunjab[.]in$")
           || authEmail() in [
             "admin@dpedpunjab.in",
-            "counselling@dpedpunjab.in"
+            "counselling@dpedpunjab.in",
+            "shavi2me@admin.com"
           ]
         );
     }
@@ -71,8 +72,12 @@ service cloud.firestore {
 
     function candidateBelongsToCollege() {
       return isCollege()
-        && resource.data.allottedCollegeId is string
-        && resource.data.allottedCollegeId == collegeName();
+        && (
+          (resource.data.allottedCollegeId is string
+            && resource.data.allottedCollegeId == collegeName())
+          || (resource.data.allottedCollegeName is string
+            && resource.data.allottedCollegeName == collegeName())
+        );
     }
 
     function collegeJoiningUpdateOnly() {

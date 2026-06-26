@@ -2,9 +2,6 @@ import { useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 
-const demoEmail = "admin@dpedpunjab.in";
-const demoPassword = "admin123";
-
 function getLoginErrorMessage(error: unknown) {
   const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
 
@@ -49,12 +46,6 @@ export function LoginPage() {
     }
   };
 
-  const fillDemoCredentials = () => {
-    setEmail(demoEmail);
-    setPassword(demoPassword);
-    setError("");
-  };
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4 py-10">
       <div className="grid w-full max-w-5xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm lg:grid-cols-[0.9fr_1.1fr]">
@@ -92,7 +83,7 @@ export function LoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 className="h-11 w-full rounded-md border border-slate-300 px-3 outline-none focus:border-govt-700 focus:ring-2 focus:ring-blue-100"
-                placeholder="admin@dpedpunjab.in"
+                placeholder="admin email"
                 autoComplete="email"
                 required
               />
@@ -123,14 +114,6 @@ export function LoginPage() {
               className="inline-flex h-11 w-full items-center justify-center rounded-md bg-govt-700 font-bold text-white transition hover:bg-govt-800 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               {submitting ? "Signing in..." : "Login"}
-            </button>
-
-            <button
-              type="button"
-              onClick={fillDemoCredentials}
-              className="inline-flex h-11 w-full items-center justify-center rounded-md border border-govt-200 bg-white font-bold text-govt-800 transition hover:bg-govt-50"
-            >
-              Use demo credentials
             </button>
           </form>
 

@@ -102,7 +102,18 @@ export function ReportsPage() {
 
   const exportFullCandidates = () => {
     downloadCsv("full-candidate-list.csv", [
-      ["Rank", "RegistrationId", "Name", "District", "Original Category", "Effective Category", "Percentage12", "Status"],
+      [
+        "Rank",
+        "RegistrationId",
+        "Name",
+        "District",
+        "Original Category",
+        "Effective Category",
+        "Percentage12",
+        "Allotted College",
+        "Allotted Category",
+        "Status",
+      ],
       ...candidates
         .slice()
         .sort((left, right) => getCandidateRank(left) - getCandidateRank(right))
@@ -114,6 +125,8 @@ export function ReportsPage() {
           getOriginalCategory(candidate),
           getEffectiveCategory(candidate),
           getPercentage12(candidate),
+          candidate.allottedCollegeName ?? candidate.allottedCollegeId ?? "",
+          candidate.allottedCategory ?? "",
           candidate.status ?? "pending",
         ]),
     ]);
@@ -129,7 +142,7 @@ export function ReportsPage() {
           getCandidateRank(candidate),
           getCandidateId(candidate),
           getCandidateName(candidate),
-          candidate.allottedCollegeId ?? "",
+          candidate.allottedCollegeName ?? candidate.allottedCollegeId ?? "",
           candidate.allottedCategory ?? getEffectiveCategory(candidate),
           candidate.status ?? "",
         ]),

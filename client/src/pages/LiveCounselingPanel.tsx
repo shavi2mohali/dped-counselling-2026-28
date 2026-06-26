@@ -65,6 +65,18 @@ function getSeatTone(remaining: number) {
   return "border-emerald-300 bg-emerald-50 text-emerald-800";
 }
 
+function getSeatMatrixCategoryKey(seatData: SeatMatrixEntry, category: CategoryColumn): CategoryColumn {
+  if (
+    category === "Physically Handicapped" &&
+    seatData.remaining?.["Physically Handicapped"] === undefined &&
+    seatData.seats?.["Physically Handicapped"] === undefined
+  ) {
+    return "Phy Handicapped" as CategoryColumn;
+  }
+
+  return category;
+}
+
 function CandidateSpecificVacancyPanel({
   currentCandidate,
   displaySeatCategories,
@@ -168,10 +180,21 @@ export function LiveCounselingPanel() {
     [seatMatrix, selectedCollegeId],
   );
 
-  const eligibleCategories = useMemo(
-    () => getAvailableEligibleCategories(currentCandidate, selectedCollege),
-    [currentCandidate, selectedCollege],
-  );
+  const eligibleCategories = useMemo(() => {
+    const availableCategories = getAvailableEligibleCategories(currentCandidate, selectedCollege);
+
+    if (
+      currentCandidate?.allottedCategory &&
+      selectedCollege &&
+      (currentCandidate.allottedCollegeId === selectedCollege.id ||
+        currentCandidate.allottedCollegeId === selectedCollege.collegeName ||
+        currentCandidate.allottedCollegeName === selectedCollege.collegeName)
+    ) {
+      return Array.from(new Set([...availableCategories, currentCandidate.allottedCategory]));
+    }
+
+    return availableCategories;
+  }, [currentCandidate, selectedCollege]);
 
   const candidateEligibleCategories = useMemo(
     () => getEligibleCategories(currentCandidate),
@@ -186,7 +209,13 @@ export function LiveCounselingPanel() {
   const collegesWithAvailableSeats = useMemo(
     () =>
       currentCandidate
-        ? seatMatrix.filter((college) => getAvailableEligibleCategories(currentCandidate, college).length > 0)
+        ? seatMatrix.filter(
+            (college) =>
+              getAvailableEligibleCategories(currentCandidate, college).length > 0 ||
+              currentCandidate.allottedCollegeId === college.id ||
+              currentCandidate.allottedCollegeId === college.collegeName ||
+              currentCandidate.allottedCollegeName === college.collegeName,
+          )
         : seatMatrix.filter(hasAnyRemainingSeat),
     [currentCandidate, seatMatrix],
   );
@@ -392,52 +421,117 @@ export function LiveCounselingPanel() {
           throw new Error("Current candidate does not have a valid RegistrationId.");
         }
 
-        const seatRef = doc(firestore, "seatMatrix", selectedCollege.id);
+        const newSeatRef = doc(firestore, "seatMatrix", selectedCollege.id);
         const candidateRef = doc(firestore, "candidates", candidateId);
         const liveStateRef = doc(firestore, "settings", "liveCounseling");
         const allotmentRef = doc(collection(firestore, "allotments"));
 
         await runTransaction(firestore, async (transaction) => {
-          const seatSnapshot = await transaction.get(seatRef);
+          const candidateSnapshot = await transaction.get(candidateRef);
+          const newSeatSnapshot = await transaction.get(newSeatRef);
 
-          if (!seatSnapshot.exists()) {
+          if (!candidateSnapshot.exists()) {
+            throw new Error("Current candidate record was not found.");
+          }
+
+          if (!newSeatSnapshot.exists()) {
             throw new Error("Selected college was not found in seatMatrix.");
           }
 
-          const seatData = seatSnapshot.data() as typeof selectedCollege;
-          const categoryKey =
-            selectedCategory === "Physically Handicapped" &&
-            seatData.remaining?.["Physically Handicapped"] === undefined &&
-            seatData.seats?.["Physically Handicapped"] === undefined
-              ? ("Phy Handicapped" as CategoryColumn)
-              : selectedCategory;
-          const remaining = seatData.remaining?.[categoryKey] ?? seatData.seats?.[categoryKey] ?? 0;
-          const filled = seatData.filled?.[categoryKey] ?? 0;
+          const candidateData = candidateSnapshot.data() as Candidate;
+          const storedPreviousCollegeId = candidateData.allottedCollegeId ?? "";
+          const previousCollegeName = candidateData.allottedCollegeName ?? "";
+          const previousCategory = candidateData.allottedCategory;
+          const previousCollegeId =
+            seatMatrix.find(
+              (college) =>
+                college.id === storedPreviousCollegeId ||
+                college.collegeName === storedPreviousCollegeId ||
+                college.id === previousCollegeName ||
+                college.collegeName === previousCollegeName,
+            )?.id ?? storedPreviousCollegeId;
+          const oldCollegeRef =
+            previousCollegeId && previousCategory && previousCollegeId !== selectedCollege.id
+              ? doc(firestore, "seatMatrix", previousCollegeId)
+              : null;
+          const oldSeatSnapshot = oldCollegeRef ? await transaction.get(oldCollegeRef) : null;
+          const newSeatData = {
+            id: newSeatSnapshot.id,
+            ...(newSeatSnapshot.data() as Omit<SeatMatrixEntry, "id">),
+          } as SeatMatrixEntry;
+          const newCategoryKey = getSeatMatrixCategoryKey(newSeatData, selectedCategory);
+          const isSameAllotment = previousCollegeId === selectedCollege.id && previousCategory === selectedCategory;
+          const isSameCollegeTransfer =
+            previousCollegeId === selectedCollege.id && Boolean(previousCategory) && previousCategory !== selectedCategory;
+          const newRemaining = newSeatData.remaining?.[newCategoryKey] ?? newSeatData.seats?.[newCategoryKey] ?? 0;
+          const newFilled = newSeatData.filled?.[newCategoryKey] ?? 0;
 
-          if (remaining <= 0) {
+          if (!isSameAllotment && newRemaining <= 0) {
             throw new Error(`${selectedCategory} seats are full at ${selectedCollege.collegeName}.`);
           }
 
-          transaction.update(seatRef, {
-            [`remaining.${categoryKey}`]: remaining - 1,
-            [`filled.${categoryKey}`]: filled + 1,
-            updatedAt: serverTimestamp(),
-          });
+          if (!isSameAllotment) {
+            const newSeatUpdates: Record<string, unknown> = {
+              [`remaining.${newCategoryKey}`]: newRemaining - 1,
+              [`filled.${newCategoryKey}`]: newFilled + 1,
+              updatedAt: serverTimestamp(),
+            };
+
+            if (isSameCollegeTransfer && previousCategory) {
+              const previousCategoryKey = getSeatMatrixCategoryKey(newSeatData, previousCategory);
+              const oldRemaining = newSeatData.remaining?.[previousCategoryKey] ?? newSeatData.seats?.[previousCategoryKey] ?? 0;
+              const oldFilled = newSeatData.filled?.[previousCategoryKey] ?? 0;
+
+              newSeatUpdates[`remaining.${previousCategoryKey}`] = oldRemaining + 1;
+              newSeatUpdates[`filled.${previousCategoryKey}`] = Math.max(0, oldFilled - 1);
+            }
+
+            transaction.update(newSeatRef, newSeatUpdates);
+
+            if (oldCollegeRef && oldSeatSnapshot && previousCategory) {
+              if (!oldSeatSnapshot.exists()) {
+                throw new Error("Previously allotted college was not found in seatMatrix.");
+              }
+
+              const oldSeatData = {
+                id: oldSeatSnapshot.id,
+                ...(oldSeatSnapshot.data() as Omit<SeatMatrixEntry, "id">),
+              } as SeatMatrixEntry;
+              const previousCategoryKey = getSeatMatrixCategoryKey(oldSeatData, previousCategory);
+              const oldRemaining = oldSeatData.remaining?.[previousCategoryKey] ?? oldSeatData.seats?.[previousCategoryKey] ?? 0;
+              const oldFilled = oldSeatData.filled?.[previousCategoryKey] ?? 0;
+
+              transaction.update(oldCollegeRef, {
+                [`remaining.${previousCategoryKey}`]: oldRemaining + 1,
+                [`filled.${previousCategoryKey}`]: Math.max(0, oldFilled - 1),
+                updatedAt: serverTimestamp(),
+              });
+            }
+          }
 
           transaction.update(candidateRef, {
             status: "allotted",
-            allottedCollegeId: selectedCollege.collegeName,
+            allottedCollegeId: selectedCollege.id,
+            allottedCollegeName: selectedCollege.collegeName,
             allottedCategory: selectedCategory,
+            allotmentStatus: "allotted",
+            allotmentUpdatedAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
 
           transaction.set(allotmentRef, {
             candidateRegistrationId: candidateId,
             candidateName: getCandidateName(currentCandidate),
+            collegeId: selectedCollege.id,
             collegeName: selectedCollege.collegeName,
             category: selectedCategory,
-            seatMatrixCategoryKey: categoryKey,
-            action: "allotted",
+            seatMatrixCategoryKey: newCategoryKey,
+            action: previousCollegeId && !isSameAllotment ? "upgraded" : "allotted",
+            previousCollegeId: previousCollegeId || null,
+            previousCollegeName: previousCollegeName || null,
+            previousCategory: previousCategory || null,
+            isTransfer: Boolean(previousCollegeId && !isSameAllotment),
+            isDuplicateAllotment: isSameAllotment,
             performedByUid: user?.uid ?? "unknown",
             performedByEmail: user?.email ?? "",
             createdAt: serverTimestamp(),

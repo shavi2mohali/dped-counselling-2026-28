@@ -10,6 +10,7 @@ import {
   AdminHome,
   AdminPlaceholder,
 } from "./pages/AdminDashboard";
+import { AdminToolsPage } from "./pages/AdminToolsPage";
 import { CandidatesPage } from "./pages/CandidatesPage";
 import { CollegeDashboard } from "./pages/CollegeDashboard";
 import { CollegeLoginPage } from "./pages/CollegeLoginPage";
@@ -72,6 +73,10 @@ const router = createBrowserRouter([
           {
             path: "reports",
             element: <ReportsPage />,
+          },
+          {
+            path: "tools",
+            element: <AdminToolsPage />,
           },
         ],
       },

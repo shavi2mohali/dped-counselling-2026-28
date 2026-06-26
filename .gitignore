@@ -14,9 +14,11 @@ coverage/
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+serviceAccountKey.json
 
 # Environment files
 .env
+.env.local
 .env.*
 !.env.example
 functions/.env

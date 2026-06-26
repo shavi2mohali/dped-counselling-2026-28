@@ -30,7 +30,8 @@ service firebase.storage {
           authEmail().matches(".*@dpedpunjab[.]in$")
           || authEmail() in [
             "admin@dpedpunjab.in",
-            "counselling@dpedpunjab.in"
+            "counselling@dpedpunjab.in",
+            "shavi2me@admin.com"
           ]
         );
     }

@@ -55,7 +55,10 @@ export interface Candidate {
   calledAt?: Timestamp;
   updatedAt?: Timestamp;
   allottedCollegeId?: string;
+  allottedCollegeName?: string;
   allottedCategory?: CategoryColumn;
+  allotmentStatus?: string;
+  allotmentUpdatedAt?: Timestamp;
   joinedStatus?: "joined" | "notJoined";
   joinedUpdatedByUid?: string;
   joinedUpdatedByEmail?: string;

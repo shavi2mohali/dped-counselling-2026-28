@@ -224,6 +224,8 @@ export function CandidatesPage() {
       "Original Category",
       "Effective Category",
       "Percentage12",
+      "Allotted College",
+      "Allotted Category",
       "Status",
       "Punjab Domicile",
     ];
@@ -236,6 +238,8 @@ export function CandidatesPage() {
       getOriginalCategory(candidate),
       getEffectiveCategory(candidate),
       getPercentage12(candidate) ?? "",
+      candidate.allottedCollegeName ?? candidate.allottedCollegeId ?? "Not allotted",
+      candidate.allottedCategory ?? "",
       candidate.status ?? "pending",
       candidate.isPunjabDomicile ? "Punjab" : "Non-Punjab",
     ]);
@@ -384,10 +388,20 @@ export function CandidatesPage() {
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="min-w-[1200px] divide-y divide-slate-200 text-sm">
+          <table className="min-w-[1400px] divide-y divide-slate-200 text-sm">
             <thead className="bg-slate-50">
               <tr>
-                {["Rank", "RegistrationId", "Name", "District", "Category", "Percentage12", "Status", "Actions"].map((heading) => (
+                {[
+                  "Rank",
+                  "RegistrationId",
+                  "Name",
+                  "District",
+                  "Category",
+                  "Percentage12",
+                  "Allotted College",
+                  "Status",
+                  "Actions",
+                ].map((heading) => (
                   <th key={heading} className="px-4 py-3 text-left font-black uppercase tracking-wide text-slate-600">
                     {heading}
                   </th>
@@ -397,7 +411,7 @@ export function CandidatesPage() {
             <tbody className="divide-y divide-slate-100">
               {loadingCandidates ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-lg font-black text-slate-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-lg font-black text-slate-500">
                     Loading candidates...
                   </td>
                 </tr>
@@ -405,7 +419,7 @@ export function CandidatesPage() {
 
               {!loadingCandidates && visibleCandidates.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-lg font-black text-slate-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-lg font-black text-slate-500">
                     No candidates match the selected filters.
                   </td>
                 </tr>
@@ -425,6 +439,14 @@ export function CandidatesPage() {
                     <p className="text-xs font-semibold text-slate-500">Effective: {getEffectiveCategory(candidate)}</p>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 font-black">{getPercentage12(candidate)?.toFixed(2) ?? "-"}</td>
+                  <td className="min-w-64 px-4 py-3">
+                    <p className="font-black text-slate-950">
+                      {candidate.allottedCollegeName ?? candidate.allottedCollegeId ?? "Not allotted"}
+                    </p>
+                    {candidate.allottedCategory ? (
+                      <p className="text-xs font-semibold text-slate-500">Category: {candidate.allottedCategory}</p>
+                    ) : null}
+                  </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <StatusBadge status={candidate.status ?? "pending"} />
                   </td>

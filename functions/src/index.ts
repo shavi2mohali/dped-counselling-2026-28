@@ -1,6 +1,6 @@
-import { getAuth } from "firebase-admin/auth";
+import { getAuth, type DecodedIdToken } from "firebase-admin/auth";
 import { initializeApp } from "firebase-admin/app";
-import { FieldValue, getFirestore, type WriteBatch } from "firebase-admin/firestore";
+import { FieldPath, FieldValue, getFirestore, type QueryDocumentSnapshot, type WriteBatch } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import * as logger from "firebase-functions/logger";
 import { onRequest } from "firebase-functions/v2/https";
@@ -277,6 +277,31 @@ const requireSignedInUser = async (req: { headers: { authorization?: string } })
   }
 };
 
+const adminEmails = new Set(["admin@dpedpunjab.in", "counselling@dpedpunjab.in", "shavi2me@admin.com"]);
+
+const isAdminToken = (decodedToken: DecodedIdToken): boolean => {
+  const email = cleanString(decodedToken.email).toLowerCase();
+  const role = decodedToken.role;
+  const adminClaim = decodedToken.admin;
+
+  return (
+    adminClaim === true ||
+    role === "admin" ||
+    email.endsWith("@dpedpunjab.in") ||
+    adminEmails.has(email)
+  );
+};
+
+const requireAdminUser = async (req: { headers: { authorization?: string } }) => {
+  const decodedToken = await requireSignedInUser(req);
+
+  if (!isAdminToken(decodedToken)) {
+    throw new ImportError(403, "Only admin users can perform this action.");
+  }
+
+  return decodedToken;
+};
+
 const downloadExcelFile = async ({
   bucketName,
   fileUrl,
@@ -434,6 +459,271 @@ const commitInChunks = async (writes: Array<(batch: WriteBatch) => void>) => {
     await batch.commit();
   }
 };
+
+const pageDocumentsById = async (
+  collectionPath: string,
+  handlePage: (docs: QueryDocumentSnapshot[]) => Promise<void>,
+) => {
+  const pageSize = 400;
+  let lastDocument: QueryDocumentSnapshot | undefined;
+
+  while (true) {
+    let query = db.collection(collectionPath).orderBy(FieldPath.documentId()).limit(pageSize);
+
+    if (lastDocument) {
+      query = query.startAfter(lastDocument);
+    }
+
+    const snapshot = await query.get();
+
+    if (snapshot.empty) {
+      break;
+    }
+
+    await handlePage(snapshot.docs);
+    lastDocument = snapshot.docs[snapshot.docs.length - 1];
+  }
+};
+
+const archiveAndDeleteAllotments = async (resetId: string): Promise<number> => {
+  let archivedCount = 0;
+
+  while (true) {
+    const snapshot = await db.collection("allotments").orderBy(FieldPath.documentId()).limit(200).get();
+
+    if (snapshot.empty) {
+      break;
+    }
+
+    const batch = db.batch();
+    snapshot.docs.forEach((allotmentDoc) => {
+      batch.set(db.collection("archivedAllotments").doc(resetId).collection("records").doc(allotmentDoc.id), {
+        ...allotmentDoc.data(),
+        originalAllotmentId: allotmentDoc.id,
+        resetId,
+        archivedAt: FieldValue.serverTimestamp(),
+      });
+      batch.delete(allotmentDoc.ref);
+    });
+
+    await batch.commit();
+    archivedCount += snapshot.docs.length;
+  }
+
+  return archivedCount;
+};
+
+const resetSeatMatrixVacancies = async (): Promise<number> => {
+  let resetCount = 0;
+
+  await pageDocumentsById("seatMatrix", async (seatDocs) => {
+    const batch = db.batch();
+
+    seatDocs.forEach((seatDoc) => {
+      const data = seatDoc.data();
+      const seats = (data.seats ?? {}) as Record<string, number>;
+      const categories = Object.keys(seats).length > 0 ? Object.keys(seats) : [...CATEGORY_COLUMNS];
+      const filled = Object.fromEntries(categories.map((category) => [category, 0]));
+      const remaining = Object.fromEntries(
+        categories.map((category) => [category, cleanNumber(seats[category])]),
+      );
+
+      batch.set(
+        seatDoc.ref,
+        {
+          filled,
+          remaining,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      resetCount += 1;
+    });
+
+    await batch.commit();
+  });
+
+  return resetCount;
+};
+
+const resetCandidateCounselingFields = async (): Promise<number> => {
+  let resetCount = 0;
+
+  await pageDocumentsById("candidates", async (candidateDocs) => {
+    const batch = db.batch();
+
+    candidateDocs.forEach((candidateDoc) => {
+      batch.set(
+        candidateDoc.ref,
+        {
+          status: "pending",
+          allottedCollegeId: FieldValue.delete(),
+          allottedCollegeName: FieldValue.delete(),
+          allottedCategory: FieldValue.delete(),
+          allotmentStatus: FieldValue.delete(),
+          allotmentUpdatedAt: FieldValue.delete(),
+          allotmentRound: FieldValue.delete(),
+          counsellingStatus: FieldValue.delete(),
+          calledAt: FieldValue.delete(),
+          joinedStatus: FieldValue.delete(),
+          joinedUpdatedAt: FieldValue.delete(),
+          joinedUpdatedByUid: FieldValue.delete(),
+          joinedUpdatedByEmail: FieldValue.delete(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      resetCount += 1;
+    });
+
+    await batch.commit();
+  });
+
+  return resetCount;
+};
+
+export const resetCounseling = onRequest(
+  {
+    cors: robustCorsOptions as unknown as true,
+    region: "asia-south2",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+  },
+  async (req, res) => {
+    setCorsHeaders(res);
+
+    if (req.method === "OPTIONS") {
+      res.status(204).send("");
+      return;
+    }
+
+    if (req.method !== "POST") {
+      res.status(405).json({ success: false, error: "Method not allowed. Use POST." });
+      return;
+    }
+
+    const resetRef = db.collection("resetLogs").doc();
+    const resetId = resetRef.id;
+
+    try {
+      const startedAt = Date.now();
+      const decodedToken = await requireAdminUser(req);
+
+      logger.warn("Reset counseling requested", {
+        resetId,
+        uid: decodedToken.uid,
+        email: decodedToken.email,
+      });
+
+      await resetRef.set({
+        resetId,
+        resetByUid: decodedToken.uid,
+        resetByEmail: decodedToken.email ?? "",
+        resetAt: FieldValue.serverTimestamp(),
+        candidatesResetCount: 0,
+        seatMatrixResetCount: 0,
+        allotmentsArchivedCount: 0,
+        status: "started",
+      });
+
+      const allotmentsArchivedCount = await archiveAndDeleteAllotments(resetId);
+      const seatMatrixResetCount = await resetSeatMatrixVacancies();
+      const candidatesResetCount = await resetCandidateCounselingFields();
+
+      await commitInChunks([
+        (batch) =>
+          batch.set(
+            db.collection("settings").doc("liveCounseling"),
+            {
+              currentCandidateRegistrationId: null,
+              currentCandidateId: null,
+              currentCandidateName: null,
+              liveStatus: "not_started",
+              currentRound: 1,
+              lastAllotment: null,
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          ),
+        (batch) =>
+          batch.set(
+            db.collection("settings").doc("global"),
+            {
+              currentRound: 1,
+              allotmentStatus: "draft",
+              lastAllotment: null,
+              lastReset: {
+                resetId,
+                resetByUid: decodedToken.uid,
+                resetByEmail: decodedToken.email ?? "",
+                resetAt: FieldValue.serverTimestamp(),
+              },
+              updatedAt: FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          ),
+        (batch) =>
+          batch.set(
+            resetRef,
+            {
+              resetId,
+              resetByUid: decodedToken.uid,
+              resetByEmail: decodedToken.email ?? "",
+              resetAt: FieldValue.serverTimestamp(),
+              candidatesResetCount,
+              seatMatrixResetCount,
+              allotmentsArchivedCount,
+              status: "success",
+              timeTakenMs: Date.now() - startedAt,
+            },
+            { merge: true },
+          ),
+      ]);
+
+      const summary = {
+        success: true,
+        resetId,
+        candidatesResetCount,
+        seatMatrixResetCount,
+        allotmentsArchivedCount,
+        timeTakenMs: Date.now() - startedAt,
+        message: "Counseling reset completed successfully.",
+      };
+
+      logger.info("Reset counseling completed", summary);
+      res.status(200).json({ data: summary });
+    } catch (error) {
+      logger.error("Reset counseling failed", { resetId, error });
+
+      await resetRef
+        .set(
+          {
+            resetId,
+            resetAt: FieldValue.serverTimestamp(),
+            status: "failed",
+            error: error instanceof Error ? error.message : "Reset counseling failed",
+          },
+          { merge: true },
+        )
+        .catch((logError) => logger.error("Unable to write failed reset log", { resetId, logError }));
+
+      if (error instanceof ImportError) {
+        res.status(error.status).json({
+          success: false,
+          error: error.message,
+          resetId,
+        });
+        return;
+      }
+
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Reset counseling failed",
+        resetId,
+      });
+    }
+  },
+);
 
 export const importCandidates = onRequest(
   {

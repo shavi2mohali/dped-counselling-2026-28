@@ -5,10 +5,21 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { getFirebaseFirestore } from "../lib/firebase";
 
+const adminEmails = new Set(["admin@dpedpunjab.in", "counselling@dpedpunjab.in", "shavi2me@admin.com"]);
+
+async function isAdminUser(user: NonNullable<ReturnType<typeof useAuth>["user"]>) {
+  const token = await user.getIdTokenResult();
+  const email = user.email?.toLowerCase() ?? "";
+  const role = token.claims.role;
+
+  return token.claims.admin === true || role === "admin" || email.endsWith("@dpedpunjab.in") || adminEmails.has(email);
+}
+
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const { loading, user } = useAuth();
   const location = useLocation();
   const [checkingRole, setCheckingRole] = useState(true);
+  const [hasAdminAccess, setHasAdminAccess] = useState(false);
   const [isCollegeUser, setIsCollegeUser] = useState(false);
 
   useEffect(() => {
@@ -18,19 +29,21 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
     if (!user) {
       setCheckingRole(false);
+      setHasAdminAccess(false);
       setIsCollegeUser(false);
       return undefined;
     }
 
     let active = true;
 
-    getDoc(doc(getFirebaseFirestore(), "colleges", user.uid))
-      .then((snapshot) => {
+    Promise.all([getDoc(doc(getFirebaseFirestore(), "colleges", user.uid)), isAdminUser(user)])
+      .then(([snapshot, adminAccess]) => {
         if (!active) {
           return;
         }
 
         setIsCollegeUser(snapshot.exists());
+        setHasAdminAccess(adminAccess);
         setCheckingRole(false);
       })
       .catch(() => {
@@ -39,6 +52,7 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
         }
 
         setIsCollegeUser(false);
+        setHasAdminAccess(false);
         setCheckingRole(false);
       });
 
@@ -63,6 +77,10 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (isCollegeUser) {
     return <Navigate to="/college/dashboard" replace />;
+  }
+
+  if (!hasAdminAccess) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
   return children;
